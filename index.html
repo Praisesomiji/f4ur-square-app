@@ -180,6 +180,12 @@
   .brand-sub{ font-size:11px; color:var(--ink-dim); }
   .who{ display:flex; align-items:center; gap:12px; font-size:13px; color:var(--ink-dim); }
   .who b{ color:var(--ink); font-family:'IBM Plex Mono', monospace; }
+  .hamburger-btn{
+    display:none;
+    background:none; border:1px solid #2A3140; color:var(--ink);
+    border-radius:6px; padding:7px 11px; font-size:16px; line-height:1; cursor:pointer;
+  }
+  .hamburger-btn:hover{ border-color:var(--dim); }
   .logout{
     background:none; border:1px solid #2A3140; color:var(--ink-dim);
     border-radius:6px; padding:7px 12px; font-size:12px; cursor:pointer;
@@ -442,6 +448,28 @@
   @media (max-width: 760px){
     .grid{ grid-template-columns:1fr; }
     .meal-grid{ grid-template-columns:repeat(2,1fr); }
+
+    .topbar{ position:relative; }
+    .hamburger-btn{ display:block; }
+    .who{
+      display:none;
+      position:absolute;
+      top:calc(100% + 8px);
+      left:0;
+      right:0;
+      flex-direction:column;
+      align-items:stretch;
+      gap:8px;
+      background:var(--bezel-hi);
+      border:1px solid #2A3140;
+      border-radius:10px;
+      padding:12px;
+      z-index:30;
+      box-shadow:0 16px 32px -12px rgba(0,0,0,0.6);
+    }
+    .who.mobile-open{ display:flex; }
+    .who span{ text-align:center; padding-bottom:6px; border-bottom:1px solid #2A3140; margin-bottom:2px; }
+    .who .logout{ width:100%; padding:10px 12px; }
   }
 
   [data-screen]{ display:none; }
@@ -498,7 +526,8 @@
         <div class="brand-sub">Mealtime mission control</div>
       </div>
     </div>
-    <div class="who">
+    <button class="hamburger-btn" onclick="toggleWhoMenu('who-player')" aria-label="Menu">☰</button>
+    <div class="who" id="who-player">
       <span>Logged in as <b id="who-name">—</b></span>
       <button class="logout" id="notif-toggle-btn" onclick="toggleMealReminders()">🔔 Enable reminders</button>
       <button class="logout" onclick="openHowTo()">How to play</button>
@@ -609,7 +638,8 @@
         <div class="brand-sub">Admin · player monitor</div>
       </div>
     </div>
-    <div class="who">
+    <button class="hamburger-btn" onclick="toggleWhoMenu('who-admin')" aria-label="Menu">☰</button>
+    <div class="who" id="who-admin">
       <span>Read-only monitoring view</span>
       <button class="logout" onclick="openHowTo()">How to play</button>
       <button class="logout" onclick="handleLogout()">Log out</button>
@@ -898,6 +928,16 @@ function todayKey(d = new Date()){
 }
 
 /* ---------------- Screen routing ---------------- */
+// Mobile topbar menu: below the 760px breakpoint the .who button row hides behind a
+// hamburger toggle. Both topbars (player and admin) have their own id ('who-player' /
+// 'who-admin') so each hamburger only opens its own menu.
+function toggleWhoMenu(id){
+  document.getElementById(id).classList.toggle('mobile-open');
+}
+function closeWhoMenus(){
+  document.querySelectorAll('.who.mobile-open').forEach(el => el.classList.remove('mobile-open'));
+}
+
 function showScreen(name){
   document.querySelectorAll('[data-screen]').forEach(el => el.classList.remove('active'));
   document.querySelector(`[data-screen="${name}"]`).classList.add('active');
@@ -980,6 +1020,7 @@ async function handleLogin(){
 }
 
 function handleLogout(){
+  closeWhoMenus();
   sessionStorage.removeItem('foursquare_session');
   clearInterval(window.__tickInterval);
   clearInterval(window.__adminTickInterval);
@@ -1589,7 +1630,7 @@ function openConfirmModal(title, msg, onConfirm, opts = {}){
 function closeModal(){
   document.getElementById('modal-overlay').classList.remove('active');
 }
-function openHowTo(){ document.getElementById('howto-overlay').classList.add('active'); }
+function openHowTo(){ closeWhoMenus(); document.getElementById('howto-overlay').classList.add('active'); }
 function closeHowTo(){ document.getElementById('howto-overlay').classList.remove('active'); }
 
 function openInfo(title, bodyHtml){
