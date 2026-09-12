@@ -804,7 +804,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const rows = GRADE_BANDS.map((b, i) => {
     const nextMin = GRADE_BANDS[i - 1] ? GRADE_BANDS[i - 1].min : null;
     const range = nextMin === null ? `${b.min}%+` : (b.min === nextMin - 1 ? `${b.min}%` : `${b.min}–${nextMin - 1}%`);
-    return `<tr><td>${b.letter} · ${b.gpa.toFixed(1)}</td><td class="mono">${range}</td></tr>`;
+    return `<tr><td>${b.letter} · ${formatGpa(b.gpa)}</td><td class="mono">${range}</td></tr>`;
   }).join('');
   document.getElementById('howto-grade-table').innerHTML = rows;
 });
@@ -816,17 +816,20 @@ function gradeFor(pct){
 // flat per-band value for color/letter), this linearly interpolates BETWEEN each band's floor
 // and the next band's floor, so e.g. 47% (mid-D) lands around 2.4, not a flat 2.0.
 // Below 0% floors at the lowest band's gpa; at/above the top band's floor it caps at that gpa (5.0).
+// Grade point is a straight linear scale of the day's percentage: pct/100 * 5.0.
+// (Not tied to the letter-grade bands at all — gradeFor()/GRADE_BANDS only drive the
+// letter and the calendar cell's color; gpaFor() is a separate, simpler calculation.)
 function gpaFor(pct){
-  const anchors = GRADE_BANDS.slice().sort((a,b) => a.min - b.min);
-  if(pct <= anchors[0].min) return anchors[0].gpa;
-  for(let i = 0; i < anchors.length - 1; i++){
-    const lo = anchors[i], hi = anchors[i+1];
-    if(pct >= lo.min && pct <= hi.min){
-      const t = (pct - lo.min) / (hi.min - lo.min);
-      return lo.gpa + t * (hi.gpa - lo.gpa);
-    }
-  }
-  return anchors[anchors.length - 1].gpa;
+  const clamped = Math.min(100, Math.max(0, pct));
+  return (clamped / 100) * 5;
+}
+
+// Formats a GPA to 2 decimal places, but drops to 1 decimal when the hundredths digit
+// is 0 (e.g. 4.50 -> "4.5", but 2.85 stays "2.85").
+function formatGpa(gpa){
+  const rounded = Math.round(gpa * 100) / 100;
+  const hundredthsDigit = Math.round(rounded * 100) % 10;
+  return hundredthsDigit === 0 ? rounded.toFixed(1) : rounded.toFixed(2);
 }
 
 const BOT_NAMES = ['Chidera','Tomiwa','Nkechi','Emeka','Aisha'];
@@ -1283,7 +1286,7 @@ function render(username){
     </div>
 
     <div class="bd-row" style="margin-top:14px;"><span class="label">All-time total</span><span class="val">🪙 ${atb.total}</span></div>
-    <div class="bd-row"><span class="label">Average GPA</span><span class="val">${atb.avgGpa.toFixed(1)}</span></div>
+    <div class="bd-row"><span class="label">Average GPA</span><span class="val">${formatGpa(atb.avgGpa)}</span></div>
 
     <div class="perf-row">
       <div class="perf-label">Performance all-time <button class="info-btn" onclick="showPerfInfo('alltime')">ⓘ</button></div>
@@ -1510,7 +1513,7 @@ function renderAdminPlayerList(){
     <div class="lb-row ${p.username === adminActiveUsername ? 'me' : ''}" style="cursor:pointer;" onclick="selectAdminPlayer('${p.username}')">
       <div class="lb-rank">${String(i + 1).padStart(2, '0')}</div>
       <div class="lb-name">${p.username}</div>
-      <div class="lb-pts">GPA ${p.avgGpa.toFixed(1)} · ${p.performance}%</div>
+      <div class="lb-pts">GPA ${formatGpa(p.avgGpa)} · ${p.performance}%</div>
     </div>
   `).join('');
 }
@@ -1618,7 +1621,7 @@ function showPerfInfo(scope){
         <tr><td>Bonus points</td><td class="mono">🪙 ${a.bonus}</td></tr>
         <tr><td>All-time total</td><td class="mono">🪙 ${a.total}</td></tr>
         <tr><td>All-time potential</td><td class="mono">🪙 ${a.potential.toLocaleString()}</td></tr>
-        <tr><td>Average GPA</td><td class="mono">${a.avgGpa.toFixed(1)}</td></tr>
+        <tr><td>Average GPA</td><td class="mono">${formatGpa(a.avgGpa)}</td></tr>
       </table>
     `);
   }
@@ -1717,7 +1720,7 @@ function renderCalendarCore(ids, logs, createdAt, monthDate, mode, onDayClickFn)
     if(mode === 'raw') valText = `${d.total}`;
     else if(mode === 'pct') valText = `${pct}%`;
     else if(mode === 'letter') valText = g.letter;
-    else if(mode === 'gpa') valText = gpaFor(pct).toFixed(1);
+    else if(mode === 'gpa') valText = formatGpa(gpaFor(pct));
     cellsHtml += `
       <div class="cal-cell graded" style="background:${g.color}; color:${g.text};" onclick="${onDayClickFn}('${key}')" title="${key}">
         <span class="cal-day-num">${day}</span>
@@ -1728,7 +1731,7 @@ function renderCalendarCore(ids, logs, createdAt, monthDate, mode, onDayClickFn)
   document.getElementById(ids.grid).innerHTML = cellsHtml;
 
   document.getElementById(ids.legend).innerHTML = GRADE_BANDS.map(b => `
-    <div class="cal-legend-item"><span class="cal-legend-dot" style="background:${b.color};"></span>${b.letter} · ${b.gpa.toFixed(1)} · ${b.min}%+</div>
+    <div class="cal-legend-item"><span class="cal-legend-dot" style="background:${b.color};"></span>${b.letter} · ${formatGpa(b.gpa)} · ${b.min}%+</div>
   `).join('');
 }
 
@@ -1756,7 +1759,7 @@ function renderDayInfoModal(dateKey, logs){
   const dateObj = new Date(dateKey + 'T00:00:00');
   const label = dateObj.toLocaleDateString([], { weekday:'long', month:'long', day:'numeric', year:'numeric' });
   openInfo(label, `
-    <p style="font-size:13px;color:var(--ink-dim);line-height:1.6;margin:0 0 10px;">Grade <b style="color:${g.color};">${g.letter}</b> · GPA ${gpaFor(pct).toFixed(1)} · ${pct}% of that day's potential.</p>
+    <p style="font-size:13px;color:var(--ink-dim);line-height:1.6;margin:0 0 10px;">Grade <b style="color:${g.color};">${g.letter}</b> · GPA ${formatGpa(gpaFor(pct))} · ${pct}% of that day's potential.</p>
     <table class="howto-table">
       <tr><td>Meal points</td><td class="mono">🪙 ${d.mealRaw}</td></tr>
       <tr><td>Medication points</td><td class="mono">🪙 ${d.medRaw}</td></tr>
