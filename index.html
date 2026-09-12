@@ -134,6 +134,8 @@
   }
   .btn:hover{ filter:brightness(1.08); }
   .btn:active{ transform:translateY(1px); }
+  .btn:disabled{ opacity:0.4; cursor:not-allowed; filter:none; }
+  .btn:disabled:hover{ filter:none; }
   .btn.ghost{
     background:transparent;
     border:1px solid #2A3140;
@@ -516,6 +518,33 @@
   </div>
 </div>
 
+<!-- DATA NOTICE / CONSENT -->
+<div class="gate" data-screen="consent" style="max-width:540px;">
+  <div class="gate-console">
+    <div class="rivets"><span></span><span></span><span></span><span></span></div>
+    <div class="gate-screen">
+      <p class="gate-eyebrow">FOUR SQUARE · BEFORE YOU CONTINUE</p>
+      <h1 class="gate-title">Data &amp; privacy notice</h1>
+      <p class="gate-sub" style="margin-bottom:16px;">This is a small, informal app for a trusted group — not a commercial product — but here's honestly how your data is handled, since it's more open than a typical private account:</p>
+      <ul style="font-size:13px; color:var(--ink-dim); line-height:1.7; margin:0 0 18px; padding-left:20px;">
+        <li>Your display name, passcode, and meal/medication check-in history are stored in a shared cloud database (Firebase) so your account and scores can sync across devices.</li>
+        <li><b style="color:var(--ink);">Your name and full logged history are visible to every other player</b> — via the leaderboard, and via the calendar of anyone who looks you up — not just to you.</li>
+        <li>There's an admin monitoring view that can see every player's complete history.</li>
+        <li>Your passcode is <b style="color:var(--ink);">not stored with strong encryption</b> — don't reuse a password you use anywhere important.</li>
+        <li>This app only records that a medication was "started" or "completed," never what the medication is — but even that check-in pattern is visible the same way as meals, above.</li>
+        <li>You can permanently delete your account and all of its data at any time from inside the app.</li>
+        <li>This notice is a plain-language description, not a formal legal contract.</li>
+      </ul>
+      <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-bottom:20px;">
+        <input type="checkbox" id="consent-checkbox" onchange="onConsentCheckboxChange()" style="width:16px; height:16px; margin-top:2px; flex-shrink:0;">
+        <span style="font-size:13px; color:var(--ink-dim);">I've read this and understand how my data is handled.</span>
+      </label>
+      <button class="btn" id="consent-agree-btn" onclick="agreeToDataNotice()" disabled>Agree &amp; continue</button>
+      <p class="switch-line"><a onclick="declineDataNotice()">Log out instead</a></p>
+    </div>
+  </div>
+</div>
+
 <!-- MAIN APP -->
 <div class="console-wrap" data-screen="app">
   <div class="topbar">
@@ -816,6 +845,10 @@ const MEDS = [
 // leaderboard, and can't clock in meals. It only unlocks a read-only dashboard.
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD_HASH = simpleHash('admin');
+// Bump this any time the data notice's wording materially changes — it makes
+// hasCurrentConsent() re-prompt everyone, even players who already agreed to an
+// older version, the same way real terms-of-service versioning works.
+const NOTICE_VERSION = 1;
 // Max a day can score: 4 meals at 100% + a full ×1 bonus on those meals + 2 meds
 const DAILY_POTENTIAL = (POINTS_FULL * MEALS.length * 2) + (POINTS_FULL * MEDS.length);
 // Letter-grade bands: currently A-F (6 tiers), GPA scale 0.0–5.0. Change ONLY this array to
@@ -951,6 +984,7 @@ async function boot(){
   if(!acc){ showScreen('signup'); return; }
   if(session === acc.username){
     await syncLogsFromFirebase(acc.username);
+    if(!hasCurrentConsent(acc)){ showConsentScreen(acc.username); return; }
     enterApp(acc.username);
   } else {
     document.getElementById('login-title').textContent = `Welcome back, ${acc.username}`;
@@ -977,7 +1011,7 @@ async function handleSignup(){
 
   saveAccount({ username: name, hash: simpleHash(pass), createdAt: new Date().toISOString() });
   sessionStorage.setItem('foursquare_session', name);
-  enterApp(name);
+  showConsentScreen(name);
 }
 
 async function handleLogin(){
@@ -1016,6 +1050,7 @@ async function handleLogin(){
   saveAccount(acc); // caches this account on this device too
   sessionStorage.setItem('foursquare_session', acc.username);
   await syncLogsFromFirebase(acc.username);
+  if(!hasCurrentConsent(acc)){ showConsentScreen(acc.username); return; }
   enterApp(acc.username);
 }
 
@@ -1025,6 +1060,47 @@ function handleLogout(){
   clearInterval(window.__tickInterval);
   clearInterval(window.__adminTickInterval);
   showScreen('login');
+}
+
+/* ---------------- Data notice / consent ---------------- */
+// Shown once per account (tracked in Firebase via accounts/<username>.consentedVersion,
+// so it follows the account across devices, same as everything else). Blocks entry to
+// the app — not the admin dashboard, which isn't a player account — until agreed to.
+let pendingConsentUsername = null;
+
+function hasCurrentConsent(acc){
+  return !!(acc && acc.consentedVersion === NOTICE_VERSION);
+}
+
+function showConsentScreen(username){
+  pendingConsentUsername = username;
+  const checkbox = document.getElementById('consent-checkbox');
+  const agreeBtn = document.getElementById('consent-agree-btn');
+  if(checkbox){ checkbox.checked = false; }
+  if(agreeBtn){ agreeBtn.disabled = true; }
+  showScreen('consent');
+}
+
+function onConsentCheckboxChange(){
+  document.getElementById('consent-agree-btn').disabled = !document.getElementById('consent-checkbox').checked;
+}
+
+function agreeToDataNotice(){
+  const username = pendingConsentUsername;
+  const acc = getAccount();
+  if(!username || !acc || acc.username !== username) return; // safety guard against a stale/mismatched screen
+  acc.consentedAt = new Date().toISOString();
+  acc.consentedVersion = NOTICE_VERSION;
+  saveAccount(acc); // updates the local cache and pushes the record to Firebase
+  pendingConsentUsername = null;
+  enterApp(username);
+}
+
+function declineDataNotice(){
+  // Doesn't delete anything — an existing player who declines a newer notice keeps
+  // their account and history untouched; they can log back in and agree any time.
+  pendingConsentUsername = null;
+  handleLogout();
 }
 
 function promptDeleteAccount(){
