@@ -655,7 +655,7 @@
         <li>Log exactly <b>3</b> meals → earn a bonus equal to <b style="color:var(--rust);">50%</b> of your meal points (×0.5) added on top.</li>
         <li>Log only <b>1 or 2</b> meals → <b>no bonus</b> (×0) — but you still keep every point you actually earned.</li>
       </ul>
-      <p style="margin-top:8px;">Example: 400 meal points with all 4 logged → +400 bonus → 800 for the day. The same 400 points with only 3 meals logged → +200 bonus → 600 for the day.</p>
+      <p style="margin-top:8px;">Example: log all 4 meals at full points (400 meal points) → +400 bonus (100%) → 800 for the day. Log only 3 at full points (300 meal points, since a 4th wasn't logged) → +150 bonus (50%) → 450 for the day.</p>
     </div>
 
     <div class="howto-section">
@@ -680,14 +680,8 @@
 
     <div class="howto-section">
       <h3>Calendar</h3>
-      <p>Tap "Show calendar" at the bottom to see every day on record, color-graded on a standard 5-point scale (A–F, GPA 0.0–5.0) based on that day's performance. Switch how each day is labeled — raw score, percentage, letter grade, or grade point — with the buttons above the grid, and tap any colored day for its full breakdown.</p>
-      <table class="howto-table">
-        <tr><td>A · 5.0</td><td class="mono">90%+</td></tr>
-        <tr><td>B · 4.0</td><td class="mono">75–89%</td></tr>
-        <tr><td>C · 3.0</td><td class="mono">60–74%</td></tr>
-        <tr><td>D · 2.0</td><td class="mono">45–59%</td></tr>
-        <tr><td>F · 0.0</td><td class="mono">Below 45%</td></tr>
-      </table>
+      <p>Tap "Show calendar" at the bottom to see every day on record, color-graded on a letter-grade scale (A–F, GPA 0.0–5.0) based on that day's performance. Switch how each day is labeled — raw score, percentage, letter grade, or grade point — with the buttons above the grid, and tap any colored day for its full breakdown. Grade points scale smoothly within each band (e.g. mid-band isn't the same as the top of the band), and your running average GPA across every day is shown in the Breakdown panel.</p>
+      <table class="howto-table" id="howto-grade-table"></table>
     </div>
   </div>
 </div>
@@ -727,7 +721,9 @@ const MEDS = [
 ];
 // Max a day can score: 4 meals at 100% + a full ×1 bonus on those meals + 2 meds
 const DAILY_POTENTIAL = (POINTS_FULL * MEALS.length * 2) + (POINTS_FULL * MEDS.length);
-// Standard 5-point grading system: 5 letter grades (A–F), GPA scale 0.0–5.0
+// Letter-grade bands: currently A-F (6 tiers), GPA scale 0.0–5.0. Change ONLY this array to
+// adjust cutoffs/colors/GPA weights — gradeFor(), gpaFor(), the calendar, the legend, the
+// day-info popups, and the how-to-play table below all read from it dynamically.
 const GRADE_BANDS = [
   { min: 70, letter:'A', gpa:5.0, color:'#6FCF97', text:'#0D1015' },
   { min: 60, letter:'B', gpa:4.0, color:'#4FB6C9', text:'#0D1015' },
@@ -736,6 +732,16 @@ const GRADE_BANDS = [
   { min: 40, letter:'E', gpa:1.0, color:'#BF5F4A', text:'#F2EAD3' },
   { min: 0,  letter:'F', gpa:0.0, color:'#B3494A', text:'#F2EAD3' },
 ];
+// Fill in the "How to play" modal's grading table from GRADE_BANDS itself, so it always
+// matches whatever cutoffs are actually in effect instead of being retyped by hand.
+document.addEventListener('DOMContentLoaded', () => {
+  const rows = GRADE_BANDS.map((b, i) => {
+    const nextMin = GRADE_BANDS[i - 1] ? GRADE_BANDS[i - 1].min : null;
+    const range = nextMin === null ? `${b.min}%+` : (b.min === nextMin - 1 ? `${b.min}%` : `${b.min}–${nextMin - 1}%`);
+    return `<tr><td>${b.letter} · ${b.gpa.toFixed(1)}</td><td class="mono">${range}</td></tr>`;
+  }).join('');
+  document.getElementById('howto-grade-table').innerHTML = rows;
+});
 function gradeFor(pct){
   for(const band of GRADE_BANDS){ if(pct >= band.min) return band; }
   return GRADE_BANDS[GRADE_BANDS.length - 1];
