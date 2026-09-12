@@ -572,7 +572,7 @@
         <div class="screen" style="min-height:auto; padding:16px;">
           <button class="btn ghost reveal-btn" id="calendar-toggle" onclick="toggleSection('calendar-body','calendar-toggle','Show calendar','Hide calendar')">Show calendar</button>
           <div id="calendar-body" style="display:none; margin-top:16px;">
-            <div class="cal-mode-switch">
+            <div class="cal-mode-switch" id="cal-mode-switch">
               <button class="cal-mode-btn" data-mode="raw" onclick="setCalMode('raw')">Raw score</button>
               <button class="cal-mode-btn active" data-mode="pct" onclick="setCalMode('pct')">Percentage</button>
               <button class="cal-mode-btn" data-mode="letter" onclick="setCalMode('letter')">Letter grade</button>
@@ -596,6 +596,57 @@
   <p style="text-align:center; margin-top:18px;">
     <a style="color:var(--red); font-size:12px; cursor:pointer; text-decoration:none; opacity:0.75;" onclick="promptDeleteAccount()">Delete account</a>
   </p>
+</div>
+
+<!-- ADMIN DASHBOARD -->
+<div class="console-wrap" data-screen="admin">
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">🛡️</div>
+      <div>
+        <div class="brand-name">Four Square</div>
+        <div class="brand-sub">Admin · player monitor</div>
+      </div>
+    </div>
+    <div class="who">
+      <span>Read-only monitoring view</span>
+      <button class="logout" onclick="handleLogout()">Log out</button>
+    </div>
+  </div>
+
+  <div class="console">
+    <div class="rivets"><span></span><span></span><span></span><span></span></div>
+    <div class="grid">
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="plate">PLAYERS · RANKED BY ALL-TIME GPA</div>
+        <div class="screen" style="min-height:auto; padding:16px;">
+          <div id="admin-player-list" style="font-size:13px;color:var(--ink-dim);">Loading players…</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid" id="admin-detail-grid" style="display:none;">
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="plate" id="admin-detail-plate">PLAYER</div>
+        <div class="screen" style="min-height:auto; padding:16px;">
+          <div class="cal-mode-switch" id="admin-cal-mode-switch">
+            <button class="cal-mode-btn" data-mode="raw" onclick="adminSetCalMode('raw')">Raw score</button>
+            <button class="cal-mode-btn active" data-mode="pct" onclick="adminSetCalMode('pct')">Percentage</button>
+            <button class="cal-mode-btn" data-mode="letter" onclick="adminSetCalMode('letter')">Letter grade</button>
+            <button class="cal-mode-btn" data-mode="gpa" onclick="adminSetCalMode('gpa')">Grade point</button>
+          </div>
+          <div class="cal-header">
+            <button class="cal-nav-btn" onclick="adminCalPrevMonth()">‹ Prev</button>
+            <div class="cal-month-label" id="admin-cal-month-label"></div>
+            <button class="cal-nav-btn" id="admin-cal-next-btn" onclick="adminCalNextMonth()">Next ›</button>
+          </div>
+          <div class="cal-weekdays"><span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span></div>
+          <div class="cal-grid" id="admin-cal-grid"></div>
+          <div class="cal-legend" id="admin-cal-legend"></div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- CONFIRMATION MODAL -->
@@ -727,6 +778,11 @@ const MEDS = [
   { id:'med_started',   label:'Started meds',   icon:'💊' },
   { id:'med_completed', label:'Completed meds', icon:'✅' },
 ];
+// A single hardcoded, local-only admin login for monitoring — deliberately NOT a real
+// player account: it's never written to Firebase accounts/, never appears on the
+// leaderboard, and can't clock in meals. It only unlocks a read-only dashboard.
+const ADMIN_USERNAME = 'admin';
+const ADMIN_PASSWORD_HASH = simpleHash('admin');
 // Max a day can score: 4 meals at 100% + a full ×1 bonus on those meals + 2 meds
 const DAILY_POTENTIAL = (POINTS_FULL * MEALS.length * 2) + (POINTS_FULL * MEDS.length);
 // Letter-grade bands: currently A-F (6 tiers), GPA scale 0.0–5.0. Change ONLY this array to
@@ -842,9 +898,11 @@ function showScreen(name){
 }
 
 async function boot(){
+  const session = sessionStorage.getItem('foursquare_session');
+  if(session === ADMIN_USERNAME){ enterAdmin(); return; }
+
   const acc = getAccount();
   if(!acc){ showScreen('signup'); return; }
-  const session = sessionStorage.getItem('foursquare_session');
   if(session === acc.username){
     await syncLogsFromFirebase(acc.username);
     enterApp(acc.username);
@@ -863,6 +921,7 @@ async function handleSignup(){
   err.style.display = 'none';
   if(name.length < 2){ err.textContent = 'Enter a display name (2+ characters).'; err.style.display='block'; return; }
   if(!/^[a-zA-Z0-9 _-]+$/.test(name)){ err.textContent = 'Use only letters, numbers, spaces, - and _.'; err.style.display='block'; return; }
+  if(name.toLowerCase() === ADMIN_USERNAME){ err.textContent = '"admin" is a reserved name — pick another.'; err.style.display='block'; return; }
   if(pass.length < 4){ err.textContent = 'Passcode must be at least 4 characters.'; err.style.display='block'; return; }
 
   btn.disabled = true; btn.textContent = 'Checking name…';
@@ -881,6 +940,17 @@ async function handleLogin(){
   const err = document.getElementById('li-error');
   const btn = document.getElementById('li-btn');
   err.style.display = 'none';
+
+  if(name.toLowerCase() === ADMIN_USERNAME){
+    if(simpleHash(pass) !== ADMIN_PASSWORD_HASH){
+      err.textContent = 'Wrong name or passcode.';
+      err.style.display = 'block';
+      return;
+    }
+    sessionStorage.setItem('foursquare_session', ADMIN_USERNAME);
+    enterAdmin();
+    return;
+  }
 
   // Prefer the local copy if it matches (instant); otherwise this may be a new
   // device logging into an account created elsewhere, so ask Firebase directly.
@@ -905,6 +975,8 @@ async function handleLogin(){
 
 function handleLogout(){
   sessionStorage.removeItem('foursquare_session');
+  clearInterval(window.__tickInterval);
+  clearInterval(window.__adminTickInterval);
   showScreen('login');
 }
 
@@ -1014,21 +1086,20 @@ function daysSinceStart(acc, logs){
   return Math.max(1, diffDays + 1);
 }
 
-function allTimeBreakdown(username, logs){
-  const acc = getAccount();
+function allTimeBreakdown(username, logs, createdAt){
   let mealRaw = 0, medRaw = 0, bonus = 0, total = 0;
   Object.keys(logs).forEach(key => {
     const d = computeDay(logs, key);
     mealRaw += d.mealRaw; medRaw += d.medRaw; bonus += d.bonus; total += d.total;
   });
-  const days = daysSinceStart(acc, logs);
+  const days = daysSinceStart({ createdAt }, logs);
   const potential = days * DAILY_POTENTIAL;
   const performance = potential > 0 ? Math.min(100, Math.round((total / potential) * 100)) : 0;
 
   // Average GPA: one continuous grade point per calendar day since account creation —
   // days with nothing logged count as 0.0, matching how they already count toward "potential" above.
   let startKey;
-  if(acc && acc.createdAt) startKey = todayKey(new Date(acc.createdAt));
+  if(createdAt) startKey = todayKey(new Date(createdAt));
   else { const keys = Object.keys(logs).sort(); startKey = keys.length ? keys[0] : todayKey(); }
   const startDate = new Date(startKey + 'T00:00:00');
   const todayDate = new Date(todayKey() + 'T00:00:00');
@@ -1184,7 +1255,8 @@ function render(username){
   document.getElementById('med-grid').innerHTML = medGridHtml;
 
   // Breakdown
-  const atb = allTimeBreakdown(username, logs);
+  const selfAcc = getAccount();
+  const atb = allTimeBreakdown(username, logs, selfAcc && selfAcc.createdAt);
   const todayPerf = Math.min(100, Math.round((day.total / DAILY_POTENTIAL) * 100));
   window.__lastDay = day; window.__lastATB = atb; // for the info popups
 
@@ -1277,6 +1349,105 @@ function enterApp(username){
     await refreshLeaderboardCache();        // pick up other players' updated scores
     render(username);
   }, 30000);
+}
+
+/* ---------------- Admin dashboard ---------------- */
+// Read-only monitoring view: lists every real player (never includes the admin login
+// itself, since it's never written to Firebase) ranked by all-time GPA, and lets the
+// admin drill into any player's full calendar and day-by-day category breakdown —
+// reusing the exact same renderCalendarCore/renderDayInfoModal the player screens use.
+let adminPlayers = [];       // [{ username, createdAt, logs, avgGpa, performance }], best to worst
+let adminActiveUsername = null;
+let adminCalMonthDate = new Date(); adminCalMonthDate.setDate(1);
+let adminCalMode = 'pct';
+const ADMIN_CAL_IDS = { grid:'admin-cal-grid', monthLabel:'admin-cal-month-label', nextBtn:'admin-cal-next-btn', legend:'admin-cal-legend' };
+
+function enterAdmin(){
+  showScreen('admin');
+  clearInterval(window.__tickInterval); // the admin isn't playing, so no meal-window ticking needed
+  adminActiveUsername = null;
+  document.getElementById('admin-detail-grid').style.display = 'none';
+  refreshAdminPlayers();
+  clearInterval(window.__adminTickInterval);
+  window.__adminTickInterval = setInterval(refreshAdminPlayers, 30000);
+}
+
+async function refreshAdminPlayers(){
+  try{
+    const snap = await fbdb.ref('accounts').get();
+    const accounts = snap.exists() ? snap.val() : {};
+    const names = Object.keys(accounts);
+    const players = await Promise.all(names.map(async name => {
+      const logSnap = await fbdb.ref('logs/' + name).get();
+      const logs = logSnap.exists() ? logSnap.val() : {};
+      const createdAt = accounts[name] && accounts[name].createdAt;
+      const atb = allTimeBreakdown(name, logs, createdAt);
+      return { username: name, createdAt, logs, avgGpa: atb.avgGpa, performance: atb.performance };
+    }));
+    players.sort((a, b) => b.avgGpa - a.avgGpa); // best GPA first
+    adminPlayers = players;
+    renderAdminPlayerList();
+    if(adminActiveUsername) renderAdminCalendar(); // keep an open detail panel's data fresh too
+  }catch(e){
+    console.error('Admin player fetch failed:', e);
+    document.getElementById('admin-player-list').textContent = 'Failed to load players — check your connection.';
+  }
+}
+
+function renderAdminPlayerList(){
+  const list = document.getElementById('admin-player-list');
+  if(!adminPlayers.length){
+    list.textContent = 'No players have signed up yet.';
+    return;
+  }
+  list.innerHTML = adminPlayers.map((p, i) => `
+    <div class="lb-row ${p.username === adminActiveUsername ? 'me' : ''}" style="cursor:pointer;" onclick="selectAdminPlayer('${p.username}')">
+      <div class="lb-rank">${String(i + 1).padStart(2, '0')}</div>
+      <div class="lb-name">${p.username}</div>
+      <div class="lb-pts">GPA ${p.avgGpa.toFixed(1)} · ${p.performance}%</div>
+    </div>
+  `).join('');
+}
+
+function selectAdminPlayer(username){
+  adminActiveUsername = (adminActiveUsername === username) ? null : username; // click again to collapse
+  if(adminActiveUsername){
+    document.getElementById('admin-detail-plate').textContent = username.toUpperCase() + ' · CALENDAR';
+    document.getElementById('admin-detail-grid').style.display = '';
+    renderAdminCalendar();
+  } else {
+    document.getElementById('admin-detail-grid').style.display = 'none';
+  }
+  renderAdminPlayerList(); // re-render so the selected row highlights (or un-highlights)
+}
+
+function adminSetCalMode(mode){
+  adminCalMode = mode;
+  document.querySelectorAll('#admin-cal-mode-switch .cal-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  renderAdminCalendar();
+}
+function adminCalPrevMonth(){
+  adminCalMonthDate.setMonth(adminCalMonthDate.getMonth() - 1);
+  renderAdminCalendar();
+}
+function adminCalNextMonth(){
+  const now = new Date();
+  const isCurrentMonth = adminCalMonthDate.getFullYear() === now.getFullYear() && adminCalMonthDate.getMonth() === now.getMonth();
+  if(isCurrentMonth) return;
+  adminCalMonthDate.setMonth(adminCalMonthDate.getMonth() + 1);
+  renderAdminCalendar();
+}
+
+function renderAdminCalendar(){
+  const p = adminPlayers.find(pl => pl.username === adminActiveUsername);
+  if(!p) return;
+  renderCalendarCore(ADMIN_CAL_IDS, p.logs, p.createdAt, adminCalMonthDate, adminCalMode, 'adminShowDayInfo');
+}
+
+function adminShowDayInfo(dateKey){
+  const p = adminPlayers.find(pl => pl.username === adminActiveUsername);
+  if(!p) return;
+  renderDayInfoModal(dateKey, p.logs); // same day-detail popup the player screen uses, with category breakdown
 }
 
 /* ---------------- Modals ---------------- */
@@ -1383,7 +1554,7 @@ let calMode = 'pct';
 
 function setCalMode(mode){
   calMode = mode;
-  document.querySelectorAll('.cal-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  document.querySelectorAll('#cal-mode-switch .cal-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   const acc = getAccount();
   if(acc) renderCalendar(acc.username);
 }
@@ -1402,20 +1573,21 @@ function calNextMonth(){
   if(acc) renderCalendar(acc.username);
 }
 
-function renderCalendar(username){
-  const acc = getAccount();
-  const logs = getLogs(username);
-  const startKey = (acc && acc.createdAt) ? todayKey(new Date(acc.createdAt)) : (Object.keys(logs).sort()[0] || todayKey());
+// Shared calendar renderer: draws one month's grid + legend into whatever DOM ids are
+// given, using whatever logs/createdAt/month/mode are passed in. Used by both the
+// player's own calendar (below) and the admin dashboard's per-player calendar.
+function renderCalendarCore(ids, logs, createdAt, monthDate, mode, onDayClickFn){
+  const startKey = createdAt ? todayKey(new Date(createdAt)) : (Object.keys(logs).sort()[0] || todayKey());
   const startDate = new Date(startKey + 'T00:00:00');
   const todayDate = new Date(todayKey() + 'T00:00:00');
 
-  const year = calMonthDate.getFullYear();
-  const month = calMonthDate.getMonth();
-  document.getElementById('cal-month-label').textContent = calMonthDate.toLocaleDateString([], { month:'long', year:'numeric' });
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  document.getElementById(ids.monthLabel).textContent = monthDate.toLocaleDateString([], { month:'long', year:'numeric' });
 
   const now = new Date();
   const isCurrentMonth = year === now.getFullYear() && month === now.getMonth();
-  document.getElementById('cal-next-btn').disabled = isCurrentMonth;
+  document.getElementById(ids.nextBtn).disabled = isCurrentMonth;
 
   const firstOfMonth = new Date(year, month, 1);
   const startWeekday = firstOfMonth.getDay();
@@ -1436,28 +1608,42 @@ function renderCalendar(username){
     const pct = d.potential > 0 ? Math.round((d.total / d.potential) * 100) : 0;
     const g = gradeFor(pct);
     let valText = '';
-    if(calMode === 'raw') valText = `${d.total}`;
-    else if(calMode === 'pct') valText = `${pct}%`;
-    else if(calMode === 'letter') valText = g.letter;
-    else if(calMode === 'gpa') valText = gpaFor(pct).toFixed(1);
+    if(mode === 'raw') valText = `${d.total}`;
+    else if(mode === 'pct') valText = `${pct}%`;
+    else if(mode === 'letter') valText = g.letter;
+    else if(mode === 'gpa') valText = gpaFor(pct).toFixed(1);
     cellsHtml += `
-      <div class="cal-cell graded" style="background:${g.color}; color:${g.text};" onclick="showDayInfo('${key}')" title="${key}">
+      <div class="cal-cell graded" style="background:${g.color}; color:${g.text};" onclick="${onDayClickFn}('${key}')" title="${key}">
         <span class="cal-day-num">${day}</span>
         <span class="cal-val">${valText}</span>
       </div>
     `;
   }
-  document.getElementById('cal-grid').innerHTML = cellsHtml;
+  document.getElementById(ids.grid).innerHTML = cellsHtml;
 
-  document.getElementById('cal-legend').innerHTML = GRADE_BANDS.map(b => `
+  document.getElementById(ids.legend).innerHTML = GRADE_BANDS.map(b => `
     <div class="cal-legend-item"><span class="cal-legend-dot" style="background:${b.color};"></span>${b.letter} · ${b.gpa.toFixed(1)} · ${b.min}%+</div>
   `).join('');
+}
+
+const CAL_IDS = { grid:'cal-grid', monthLabel:'cal-month-label', nextBtn:'cal-next-btn', legend:'cal-legend' };
+
+function renderCalendar(username){
+  const acc = getAccount();
+  const logs = getLogs(username);
+  renderCalendarCore(CAL_IDS, logs, acc && acc.createdAt, calMonthDate, calMode, 'showDayInfo');
 }
 
 function showDayInfo(dateKey){
   const acc = getAccount();
   if(!acc) return;
   const logs = getLogs(acc.username);
+  renderDayInfoModal(dateKey, logs);
+}
+
+// Shared by the player's own calendar and the admin dashboard's per-player calendar,
+// so both show the identical day-detail popup from whatever logs object they pass in.
+function renderDayInfoModal(dateKey, logs){
   const d = computeDay(logs, dateKey);
   const pct = d.potential > 0 ? Math.round((d.total / d.potential) * 100) : 0;
   const g = gradeFor(pct);
@@ -1472,7 +1658,28 @@ function showDayInfo(dateKey){
       <tr><td>Day's total</td><td class="mono">🪙 ${d.total}</td></tr>
       <tr><td>Day's potential</td><td class="mono">🪙 ${d.potential}</td></tr>
     </table>
+    <p style="font-size:12px;color:var(--ink-dim);margin:16px 0 6px;">Where the points came from</p>
+    <table class="howto-table">${categoryBreakdownRows(logs, dateKey)}</table>
   `);
+}
+
+// One row per meal/med for a given day: what was earned, what was missed, and why.
+function categoryBreakdownRows(logs, dateKey){
+  const dayLogs = logs[dateKey] || {};
+  return MEALS.concat(MEDS).map(e => {
+    const entry = dayLogs[e.id];
+    let statusText, color;
+    if(!entry){
+      statusText = 'Not logged · 0 pts'; color = 'var(--red)';
+    } else if(entry.points > 0 && entry.pct >= 100){
+      statusText = `On time · +${entry.points} pts`; color = 'var(--green)';
+    } else if(entry.points > 0){
+      statusText = `Logged late · +${entry.points} pts`; color = 'var(--amber)';
+    } else {
+      statusText = 'Back-logged · 0 pts'; color = 'var(--red)';
+    }
+    return `<tr><td>${e.icon} ${e.label}</td><td class="mono" style="color:${color};">${statusText}</td></tr>`;
+  }).join('');
 }
 
 boot();
