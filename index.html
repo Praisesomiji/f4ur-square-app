@@ -801,7 +801,7 @@
 
     <div class="howto-section">
       <h3>Calendar</h3>
-      <p>Tap "Show calendar" at the bottom to see every day on record, color-graded on a letter-grade scale (A–F, GPA 0.0–5.0) based on that day's performance. Switch how each day is labeled — raw score, percentage, letter grade, or grade point — with the buttons above the grid, and tap any colored day for its full breakdown. Grade points scale smoothly within each band (e.g. mid-band isn't the same as the top of the band), and your running average GPA across every day is shown in the Breakdown panel.</p>
+      <p>Tap "Show calendar" at the bottom to see every day on record, color-graded on a letter-grade scale (A–F, GPA 0.0–5.0) based on that day's performance. Switch how each day is labeled — raw score, percentage, letter grade, or grade point — with the buttons above the grid, and tap any colored day for its full breakdown. Grade point matches the letter grade exactly (e.g. any B day is a flat 4.0), and your running average GPA across every day is shown in the Breakdown panel.</p>
       <table class="howto-table" id="howto-grade-table"></table>
     </div>
   </div>
@@ -876,16 +876,13 @@ function gradeFor(pct){
   for(const band of GRADE_BANDS){ if(pct >= band.min) return band; }
   return GRADE_BANDS[GRADE_BANDS.length - 1];
 }
-// Continuous grade point for a single day/percentage — unlike gradeFor() (which snaps to a
-// flat per-band value for color/letter), this linearly interpolates BETWEEN each band's floor
-// and the next band's floor, so e.g. 47% (mid-D) lands around 2.4, not a flat 2.0.
-// Below 0% floors at the lowest band's gpa; at/above the top band's floor it caps at that gpa (5.0).
-// Grade point is a straight linear scale of the day's percentage: pct/100 * 5.0.
-// (Not tied to the letter-grade bands at all — gradeFor()/GRADE_BANDS only drive the
-// letter and the calendar cell's color; gpaFor() is a separate, simpler calculation.)
+// Grade point is flat per letter-grade band — identical to that band's own `gpa` value
+// in GRADE_BANDS (e.g. anything 70%+ is a flat 5.0, anything 60-69% is a flat 4.0).
+// There's no interpolation and no separate linear formula: gpaFor(pct) === gradeFor(pct).gpa.
+// This is a single-point definition — change GRADE_BANDS and both the letter grade and
+// the GPA update together, everywhere GPA is shown.
 function gpaFor(pct){
-  const clamped = Math.min(100, Math.max(0, pct));
-  return (clamped / 100) * 5;
+  return gradeFor(pct).gpa;
 }
 
 // Formats a GPA to 2 decimal places, but drops to 1 decimal when the hundredths digit
@@ -1219,8 +1216,9 @@ function allTimeBreakdown(username, logs, createdAt){
   const potential = days * DAILY_POTENTIAL;
   const performance = potential > 0 ? Math.min(100, Math.round((total / potential) * 100)) : 0;
 
-  // Average GPA: one continuous grade point per calendar day since account creation —
-  // days with nothing logged count as 0.0, matching how they already count toward "potential" above.
+  // Average GPA: one flat, per-band grade point (gpaFor) for each calendar day since account
+  // creation, averaged together — days with nothing logged count as 0.0, matching how they
+  // already count toward "potential" above.
   let startKey;
   if(createdAt) startKey = todayKey(new Date(createdAt));
   else { const keys = Object.keys(logs).sort(); startKey = keys.length ? keys[0] : todayKey(); }
