@@ -283,6 +283,7 @@
     text-align:center;
     display:flex; flex-direction:column; align-items:center; gap:8px;
   }
+  .meal-card.warn{ border-color:var(--red); box-shadow:0 0 0 1px rgba(179,73,74,0.35); background:rgba(179,73,74,0.06); }
   .meal-icon{ font-size:22px; }
   .meal-name{ font-size:13px; font-weight:600; }
   .meal-window{ font-size:10px; color:var(--ink-dim); font-family:'IBM Plex Mono', monospace; }
@@ -291,6 +292,7 @@
   .meal-state.full{ background:rgba(111,207,151,0.14); color:var(--green); }
   .meal-state.half{ background:rgba(201,116,86,0.14); color:var(--rust); }
   .meal-state.done{ background:rgba(232,163,61,0.14); color:var(--amber); }
+  .meal-state.warn{ background:rgba(179,73,74,0.18); color:var(--red); font-weight:600; }
   .meal-btn{
     margin-top:4px;
     width:100%;
@@ -531,7 +533,7 @@
         <li><b style="color:var(--ink);">Your name and full logged history are visible to every other player</b> — via the leaderboard, and via the calendar of anyone who looks you up — not just to you.</li>
         <li>There's an admin monitoring view that can see every player's complete history.</li>
         <li>Your passcode is <b style="color:var(--ink);">not stored with strong encryption</b> — don't reuse a password you use anywhere important.</li>
-        <li>This app only records that a medication was "started" or "completed," never what the medication is — but even that check-in pattern is visible the same way as meals, above.</li>
+        <li>This app only records whether your meds were taken that day, never what the medication is — but even that check-in is visible the same way as meals, above.</li>
         <li>You can permanently delete your account and all of its data at any time from inside the app.</li>
         <li>This notice is a plain-language description, not a formal legal contract.</li>
       </ul>
@@ -651,7 +653,7 @@
     </div>
   </div>
 
-  <p class="footer-note">Each meal scores 100% on time, 50% if logged late, 0% after midnight · Medications score 100% same-day, 0% if back-logged later<br>Log all 4 meals → +100% of today's meal points as bonus · Log exactly 3 → +50% · Log only 1–2 → +0 bonus (you still keep what you earned)</p>
+  <p class="footer-note">Each meal scores 100% on time, 50% if logged late, 0% after midnight · Meds taken scores 200 pts same-day, or a −150 penalty once a day closes with meds never logged<br>Log all 4 meals → +100% of today's meal points as bonus · Log exactly 3 → +50% · Log only 1–2 → +0 bonus (you still keep what you earned)</p>
   <p style="text-align:center; margin-top:18px;">
     <a style="color:var(--red); font-size:12px; cursor:pointer; text-decoration:none; opacity:0.75;" onclick="promptDeleteAccount()">Delete account</a>
   </p>
@@ -781,7 +783,8 @@
 
     <div class="howto-section">
       <h3>Medication</h3>
-      <p>Two check-ins, each worth the same 100 coins as a meal: <b>Started meds</b> and <b>Completed meds</b>. They're available all day, worth full coins if logged the same day, and don't affect the meal bonus.</p>
+      <p>One check-in — <b>Meds taken</b> — worth 200 coins, available all day. Log it any time before midnight for full coins; it doesn't affect the meal bonus.</p>
+      <p style="margin-top:8px;">Skip it entirely and the day is closed with nothing logged, and you'll lose <b style="color:var(--red);">150 coins</b> from that day's total once it's over — that's why the card turns red after 7 PM if it's still not done. The penalty only ever applies to a day that's already finished; there's no rush before then.</p>
     </div>
 
     <div class="howto-section">
@@ -836,9 +839,19 @@ const MEALS = [
 ];
 const DAY_CLOSE_MIN = 24*60; // midnight
 const POINTS_FULL = 100;
+// Meds are a single all-or-nothing check-in (not per-dose or per-step) worth a flat 200
+// points if logged same-day — same total ceiling as the old 2-item version (100+100).
+const MED_POINTS_FULL = 200;
+// If a past day closes with meds never logged (or only recorded via a 0-point back-log),
+// this is subtracted from that day's total — see computeDay(). It only ever applies to a
+// day that's already over, never to today while there's still time left to log it.
+const MED_PENALTY = 150;
+// From this hour onward (24h clock), an unlogged meds card turns red as a warning that the
+// MED_PENALTY is coming if it's still not logged by midnight. Purely a same-day UI cue —
+// it doesn't affect scoring on its own; only computeDay()'s past-day check does that.
+const MED_WARNING_HOUR = 19; // 7:00 PM
 const MEDS = [
-  { id:'med_started',   label:'Started meds',   icon:'💊' },
-  { id:'med_completed', label:'Completed meds', icon:'✅' },
+  { id:'meds_taken', label:'Meds taken', icon:'💊' },
 ];
 // A single hardcoded, local-only admin login for monitoring — deliberately NOT a real
 // player account: it's never written to Firebase accounts/, never appears on the
@@ -849,8 +862,10 @@ const ADMIN_PASSWORD_HASH = simpleHash('admin');
 // hasCurrentConsent() re-prompt everyone, even players who already agreed to an
 // older version, the same way real terms-of-service versioning works.
 const NOTICE_VERSION = 1;
-// Max a day can score: 4 meals at 100% + a full ×1 bonus on those meals + 2 meds
-const DAILY_POTENTIAL = (POINTS_FULL * MEALS.length * 2) + (POINTS_FULL * MEDS.length);
+// Max a day can score: 4 meals at 100% + a full ×1 bonus on those meals + meds.
+// (Missing meds is a separate PENALTY subtracted in computeDay(), not a smaller
+// ceiling here — the ceiling stays the same whether or not meds get taken.)
+const DAILY_POTENTIAL = (POINTS_FULL * MEALS.length * 2) + MED_POINTS_FULL;
 // Letter-grade bands: currently A-F (6 tiers), GPA scale 0.0–5.0. Change ONLY this array to
 // adjust cutoffs/colors/GPA weights — gradeFor(), gpaFor(), the calendar, the legend, the
 // day-info popups, and the how-to-play table below all read from it dynamically.
@@ -1166,7 +1181,7 @@ function logMed(username, medId){
   const logs = getLogs(username);
   if(!logs[key]) logs[key] = {};
   if(logs[key][medId]) return; // already logged
-  logs[key][medId] = { pct: 100, points: POINTS_FULL, loggedAt: now.toISOString() };
+  logs[key][medId] = { pct: 100, points: MED_POINTS_FULL, loggedAt: now.toISOString() };
   saveLogs(username, logs);
   render(username);
 }
@@ -1180,16 +1195,28 @@ function computeDay(logs, key){
       if(dayLogs[m.id].points > 0) mealCount++; // 0-point back-logs don't count toward the bonus
     }
   });
-  let medRaw = 0;
-  MEDS.forEach(md => { if(dayLogs[md.id]){ medRaw += dayLogs[md.id].points; } });
+  let medRaw = 0, medTaken = false;
+  MEDS.forEach(md => {
+    if(dayLogs[md.id]){
+      medRaw += dayLogs[md.id].points;
+      if(dayLogs[md.id].points > 0) medTaken = true;
+    }
+  });
 
   let bonusRate = 0; // 1 or 2 meals logged => no bonus
   if(mealCount === 4) bonusRate = 1;
   else if(mealCount === 3) bonusRate = 0.5;
   const bonus = Math.round(mealRaw * bonusRate); // bonus is ADDED on top, never subtracted
-  const total = mealRaw + medRaw + bonus;
 
-  return { mealRaw, medRaw, mealCount, bonusRate, bonus, total, potential: DAILY_POTENTIAL };
+  // Missed-meds penalty: only once a day is fully over (a past day, not today) and meds
+  // were never completed that day — absent entirely, or only recorded via a 0-point
+  // back-log. Never applies to today, since there's still time left to log it.
+  const isPastDay = key < todayKey();
+  const medPenalty = (isPastDay && !medTaken) ? MED_PENALTY : 0;
+
+  const total = Math.max(0, mealRaw + medRaw + bonus - medPenalty); // floored — never negative
+
+  return { mealRaw, medRaw, mealCount, bonusRate, bonus, medPenalty, total, potential: DAILY_POTENTIAL };
 }
 
 function daysSinceStart(acc, logs){
@@ -1353,18 +1380,22 @@ function render(username){
   document.getElementById('meal-grid').innerHTML = mealGridHtml;
 
   // Medication grid
+  const medWarningActive = now.getHours() >= MED_WARNING_HOUR;
   const medGridHtml = MEDS.map(md => {
     const logged = logs[key] && logs[key][md.id];
-    let stateLabel, stateClass, btnLabel, disabled = false, btnClass = '';
+    let stateLabel, stateClass, btnLabel, disabled = false, btnClass = '', cardClass = '';
     if(logged){
       stateLabel = `Logged · ${logged.pct}%`; stateClass = 'done';
       btnLabel = `+${logged.points} pts`; disabled = true; btnClass = 'logged';
+    } else if(medWarningActive){
+      stateLabel = `⚠️ -${MED_PENALTY} pts if not done by midnight`; stateClass = 'warn';
+      btnLabel = `Log now · ${MED_POINTS_FULL} pts`; cardClass = 'warn';
     } else {
       stateLabel = 'Available'; stateClass = 'full';
-      btnLabel = 'Log · 100%'; disabled = false;
+      btnLabel = `Log · ${MED_POINTS_FULL} pts`; disabled = false;
     }
     return `
-      <div class="meal-card">
+      <div class="meal-card ${cardClass}">
         <div class="meal-icon">${md.icon}</div>
         <div class="meal-name">${md.label}</div>
         <div class="meal-state ${stateClass}">${stateLabel}</div>
@@ -1880,6 +1911,7 @@ function renderDayInfoModal(dateKey, logs){
       <tr><td>Meal points</td><td class="mono">🪙 ${d.mealRaw}</td></tr>
       <tr><td>Medication points</td><td class="mono">🪙 ${d.medRaw}</td></tr>
       <tr><td>Daily bonus</td><td class="mono">🪙 ${d.bonus}</td></tr>
+      ${d.medPenalty > 0 ? `<tr><td style="color:var(--red);">Missed-meds penalty</td><td class="mono" style="color:var(--red);">−${d.medPenalty}</td></tr>` : ''}
       <tr><td>Day's total</td><td class="mono">🪙 ${d.total}</td></tr>
       <tr><td>Day's potential</td><td class="mono">🪙 ${d.potential}</td></tr>
     </table>
