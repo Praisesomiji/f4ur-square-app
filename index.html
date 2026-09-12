@@ -593,6 +593,9 @@
   </div>
 
   <p class="footer-note">Each meal scores 100% on time, 50% if logged late, 0% after midnight · Medications score 100% same-day, 0% if back-logged later<br>Log all 4 meals → +100% of today's meal points as bonus · Log exactly 3 → +50% · Log only 1–2 → +0 bonus (you still keep what you earned)</p>
+  <p style="text-align:center; margin-top:18px;">
+    <a style="color:var(--red); font-size:12px; cursor:pointer; text-decoration:none; opacity:0.75;" onclick="promptDeleteAccount()">Delete account</a>
+  </p>
 </div>
 
 <!-- CONFIRMATION MODAL -->
@@ -600,6 +603,11 @@
   <div class="modal-box">
     <div class="modal-title" id="modal-title">Are you sure?</div>
     <p class="modal-msg" id="modal-msg"></p>
+    <div id="modal-confirm-input-wrap" style="display:none; margin-top:16px;">
+      <label for="modal-confirm-input">Re-enter your passcode to confirm</label>
+      <input type="password" id="modal-confirm-input" autocomplete="off">
+      <div class="error-msg" id="modal-confirm-error">Wrong passcode.</div>
+    </div>
     <div class="modal-actions">
       <button class="btn ghost" style="width:auto;" onclick="closeModal()">Cancel</button>
       <button class="btn danger" id="modal-confirm-btn">Remove meal</button>
@@ -898,6 +906,36 @@ async function handleLogin(){
 function handleLogout(){
   sessionStorage.removeItem('foursquare_session');
   showScreen('login');
+}
+
+function promptDeleteAccount(){
+  const acc = getAccount();
+  if(!acc) return;
+  openConfirmModal(
+    'Delete your account?',
+    `This permanently deletes "${acc.username}" and every logged day — on every device, including the leaderboard and calendar history. This can't be undone.`,
+    () => deleteAccount(acc.username),
+    { confirmLabel: 'Delete account', requirePasscodeHash: acc.hash }
+  );
+}
+
+async function deleteAccount(username){
+  try{
+    await fbdb.ref('accounts/' + username).remove();
+    await fbdb.ref('logs/' + username).remove();
+  }catch(e){ console.error('Firebase account delete failed:', e); }
+
+  localStorage.removeItem(ACCOUNT_KEY);
+  localStorage.removeItem(logsKey(username));
+  sessionStorage.removeItem('foursquare_session');
+  clearInterval(window.__tickInterval);
+
+  // Clear the login/signup forms so no trace of the deleted account lingers on screen
+  document.getElementById('li-name').value = '';
+  document.getElementById('li-pass').value = '';
+  document.getElementById('su-name').value = '';
+  document.getElementById('su-pass').value = '';
+  showScreen('signup');
 }
 
 /* ---------------- Meal scoring logic ---------------- */
@@ -1242,13 +1280,29 @@ function enterApp(username){
 }
 
 /* ---------------- Modals ---------------- */
-function openConfirmModal(title, msg, onConfirm){
+function openConfirmModal(title, msg, onConfirm, opts = {}){
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-msg').textContent = msg;
+
+  const inputWrap = document.getElementById('modal-confirm-input-wrap');
+  const input = document.getElementById('modal-confirm-input');
+  const inputErr = document.getElementById('modal-confirm-error');
+  input.value = '';
+  inputErr.style.display = 'none';
+  inputWrap.style.display = opts.requirePasscodeHash ? 'block' : 'none';
+
   const oldBtn = document.getElementById('modal-confirm-btn');
+  oldBtn.textContent = opts.confirmLabel || 'Remove meal';
   const newBtn = oldBtn.cloneNode(true); // strips any previously bound listener
   oldBtn.parentNode.replaceChild(newBtn, oldBtn);
-  newBtn.addEventListener('click', () => { onConfirm(); closeModal(); });
+  newBtn.addEventListener('click', () => {
+    if(opts.requirePasscodeHash && simpleHash(input.value) !== opts.requirePasscodeHash){
+      inputErr.style.display = 'block';
+      return; // wrong passcode: keep the modal open, don't run onConfirm
+    }
+    onConfirm();
+    closeModal();
+  });
   document.getElementById('modal-overlay').classList.add('active');
 }
 function closeModal(){
