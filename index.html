@@ -500,6 +500,7 @@
     </div>
     <div class="who">
       <span>Logged in as <b id="who-name">—</b></span>
+      <button class="logout" id="notif-toggle-btn" onclick="toggleMealReminders()">🔔 Enable reminders</button>
       <button class="logout" onclick="openHowTo()">How to play</button>
       <button class="logout" onclick="handleLogout()">Log out</button>
     </div>
@@ -695,6 +696,7 @@
         <tr><td>🍲 Dinner</td><td class="mono">5:00 PM – 11:59 PM</td></tr>
       </table>
       <p style="margin-top:8px;">Windows overlap on purpose — Brunch opens while Breakfast is still logging. You can't log a meal before its window opens.</p>
+      <p style="margin-top:8px;">Turn on <b>Enable reminders</b> (top of the app) to get a nudge 1 hour and 10 minutes before each meal's full-points deadline. These only arrive while the app is open on this device — closing it fully means no reminder, since that would need a server to send real push notifications.</p>
     </div>
 
     <div class="howto-section">
@@ -1343,12 +1345,116 @@ function enterApp(username){
   refreshLeaderboardCache().then(() => render(username)); // fill in real scores once they arrive
   render(username);
   populateBacklogOptions(username);
+  updateReminderButton(username);
+  checkMealReminders(username); // catch anything already due the moment the app opens
   clearInterval(window.__tickInterval);
   window.__tickInterval = setInterval(async () => {
     await syncLogsFromFirebase(username);   // pick up meals logged on other devices
     await refreshLeaderboardCache();        // pick up other players' updated scores
     render(username);
+    checkMealReminders(username);
   }, 30000);
+}
+
+/* ---------------- Meal-deadline reminders ---------------- */
+// These are LOCAL notifications, scheduled entirely on-device — not server-sent push.
+// They only fire while this tab/installed app is actually open and running (foreground
+// or backgrounded). If the app is fully closed, nothing arrives: reliably notifying on a
+// closed app requires a server that sends real push messages, which this project doesn't have.
+const REMINDER_OFFSETS = [
+  { minutesBefore: 60, tag: '1hr',  body: (label) => `About 1 hour left to log ${label} for full points.` },
+  { minutesBefore: 10, tag: '10min', body: (label) => `Only 10 minutes left to log ${label} for full points!` },
+];
+
+function notifPrefKey(username){ return 'foursquare_notif_enabled_' + username; }
+function notifiedTodayKey(username){ return 'foursquare_notified_' + username + '_' + todayKey(); }
+function remindersEnabled(username){ return localStorage.getItem(notifPrefKey(username)) === '1'; }
+
+async function toggleMealReminders(){
+  const acc = getAccount();
+  if(!acc) return;
+  const username = acc.username;
+
+  if(remindersEnabled(username)){
+    localStorage.setItem(notifPrefKey(username), '0');
+    updateReminderButton(username);
+    return;
+  }
+  if(!('Notification' in window)){
+    alert('This browser doesn\u2019t support notifications.');
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  if(permission === 'granted'){
+    localStorage.setItem(notifPrefKey(username), '1');
+    checkMealReminders(username); // catch anything already due right now
+  }
+  updateReminderButton(username);
+}
+
+function updateReminderButton(username){
+  const btn = document.getElementById('notif-toggle-btn');
+  if(!btn) return;
+  if(!('Notification' in window)){
+    btn.textContent = '🔕 Reminders unsupported';
+    btn.disabled = true;
+    return;
+  }
+  if(Notification.permission === 'denied'){
+    btn.textContent = '🔕 Reminders blocked';
+    return;
+  }
+  btn.textContent = remindersEnabled(username) ? '🔔 Reminders on' : '🔕 Enable reminders';
+}
+
+function getNotifiedSet(username){
+  try{ return new Set(JSON.parse(localStorage.getItem(notifiedTodayKey(username))) || []); }
+  catch(e){ return new Set(); }
+}
+function saveNotifiedSet(username, set){
+  localStorage.setItem(notifiedTodayKey(username), JSON.stringify([...set]));
+}
+
+async function fireReminder(title, body){
+  try{
+    if('serviceWorker' in navigator){
+      const reg = await navigator.serviceWorker.ready;
+      reg.showNotification(title, { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png' });
+    } else {
+      new Notification(title, { body, icon: 'icons/icon-192.png' });
+    }
+  }catch(e){ console.error('Notification failed:', e); }
+}
+
+// Called on entering the app and on every 30s tick while it's open. Fires a one-time
+// local notification per meal/offset once the clock crosses 1hr or 10min before that
+// meal's full-points deadline — but only if the meal isn't already logged and the
+// window hasn't fully closed yet. Never repeats for the same meal/offset/day.
+function checkMealReminders(username){
+  if(!remindersEnabled(username)) return;
+  if(!('Notification' in window) || Notification.permission !== 'granted') return;
+
+  const now = new Date();
+  const minutes = now.getHours()*60 + now.getMinutes();
+  const dayLogs = getLogs(username)[todayKey(now)] || {};
+  const notified = getNotifiedSet(username);
+  let changed = false;
+
+  MEALS.forEach(meal => {
+    if(dayLogs[meal.id]) return; // already logged — nothing to remind about
+    REMINDER_OFFSETS.forEach(({ minutesBefore, tag, body }) => {
+      const notifId = `${meal.id}_${tag}`;
+      if(notified.has(notifId)) return;
+      const threshold = meal.deadline - minutesBefore;
+      if(minutes >= threshold && minutes <= meal.deadline){
+        fireReminder(`${meal.icon} ${meal.label} closes soon`, body(meal.label));
+        notified.add(notifId);
+        changed = true;
+      }
+    });
+  });
+
+  if(changed) saveNotifiedSet(username, notified);
 }
 
 /* ---------------- Admin dashboard ---------------- */
