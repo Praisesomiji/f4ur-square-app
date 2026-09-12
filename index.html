@@ -851,6 +851,11 @@ const MED_PENALTY = 150;
 // above kicks in for today — logging meds at any point removes the penalty and adds the
 // full MED_POINTS_FULL, both in the same recompute.
 const MED_WARNING_HOUR = 19; // 7:00 PM
+// Cutover date for the meds redesign below (single 200-pt item + missed-meds penalty).
+// IMPORTANT: set this to the actual date you deploy this change — it's read by
+// computeDay() to make sure the penalty only ever applies to days on/after this date,
+// never retroactively to days logged before the rule existed.
+const MEDS_REDESIGN_DATE = '2026-09-13';
 const MEDS = [
   { id:'meds_taken', label:'Meds taken', icon:'💊' },
 ];
@@ -1203,6 +1208,19 @@ function computeDay(logs, key){
       if(dayLogs[md.id].points > 0) medTaken = true;
     }
   });
+  // Backward compatibility: days logged before MEDS_REDESIGN_DATE used two separate
+  // items (med_started/med_completed, 100 pts each) instead of today's single item, so
+  // they won't match anything in the current MEDS array above. Recognize that old format
+  // here so those days keep the points they actually earned — up to the same 200-point
+  // ceiling as the new single item — instead of silently reading as "meds never taken".
+  if(medRaw === 0){
+    const legacyPoints = ['med_started', 'med_completed']
+      .reduce((sum, id) => sum + (dayLogs[id] ? dayLogs[id].points : 0), 0);
+    if(legacyPoints > 0){
+      medRaw = legacyPoints;                        // 100 (one old item) or 200 (both)
+      medTaken = legacyPoints >= MED_POINTS_FULL;    // only "fully taken" if both were done
+    }
+  }
 
   let bonusRate = 0; // 1 or 2 meals logged => no bonus
   if(mealCount === 4) bonusRate = 1;
@@ -1214,10 +1232,14 @@ function computeDay(logs, key){
   // that day. This makes today's live total actually dip at 7pm as a real warning, not
   // just a cosmetic one — and it reverses instantly the moment meds get logged, since
   // medTaken flips true and this condition stops applying on the very next recompute.
+  // It also NEVER applies before MEDS_REDESIGN_DATE, since that rule didn't exist yet —
+  // retroactively penalizing old days (under either the old or new meds format) would
+  // dock points for a rule players couldn't have known about at the time.
   const isToday = key === todayKey();
   const isPastDay = key < todayKey();
   const isPastWarningHourToday = isToday && new Date().getHours() >= MED_WARNING_HOUR;
-  const medPenalty = (isPastDay || isPastWarningHourToday) && !medTaken ? MED_PENALTY : 0;
+  const isUnderNewMedsRules = key >= MEDS_REDESIGN_DATE;
+  const medPenalty = isUnderNewMedsRules && (isPastDay || isPastWarningHourToday) && !medTaken ? MED_PENALTY : 0;
 
   const total = Math.max(0, mealRaw + medRaw + bonus - medPenalty); // floored — never negative
 
