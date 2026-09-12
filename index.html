@@ -653,7 +653,7 @@
     </div>
   </div>
 
-  <p class="footer-note">Each meal scores 100% on time, 50% if logged late, 0% after midnight · Meds taken scores 200 pts same-day, or a −150 penalty once a day closes with meds never logged<br>Log all 4 meals → +100% of today's meal points as bonus · Log exactly 3 → +50% · Log only 1–2 → +0 bonus (you still keep what you earned)</p>
+  <p class="footer-note">Each meal scores 100% on time, 50% if logged late, 0% after midnight · Meds taken scores 200 pts, or a −150 penalty from 7 PM onward if not yet logged (reverses the instant you log it)<br>Log all 4 meals → +100% of today's meal points as bonus · Log exactly 3 → +50% · Log only 1–2 → +0 bonus (you still keep what you earned)</p>
   <p style="text-align:center; margin-top:18px;">
     <a style="color:var(--red); font-size:12px; cursor:pointer; text-decoration:none; opacity:0.75;" onclick="promptDeleteAccount()">Delete account</a>
   </p>
@@ -784,7 +784,7 @@
     <div class="howto-section">
       <h3>Medication</h3>
       <p>One check-in — <b>Meds taken</b> — worth 200 coins, available all day. Log it any time before midnight for full coins; it doesn't affect the meal bonus.</p>
-      <p style="margin-top:8px;">Skip it entirely and the day is closed with nothing logged, and you'll lose <b style="color:var(--red);">150 coins</b> from that day's total once it's over — that's why the card turns red after 7 PM if it's still not done. The penalty only ever applies to a day that's already finished; there's no rush before then.</p>
+      <p style="margin-top:8px;">Skip it and lose <b style="color:var(--red);">150 coins</b> from that day's total — that's why the card turns red after 7 PM if it's still not done. From 7 PM on, this actually applies to today's live score too, not just past days — but it's fully reversible: log your meds any time before midnight and the penalty disappears and the full 200 coins are added, right away.</p>
     </div>
 
     <div class="howto-section">
@@ -842,13 +842,14 @@ const POINTS_FULL = 100;
 // Meds are a single all-or-nothing check-in (not per-dose or per-step) worth a flat 200
 // points if logged same-day — same total ceiling as the old 2-item version (100+100).
 const MED_POINTS_FULL = 200;
-// If a past day closes with meds never logged (or only recorded via a 0-point back-log),
-// this is subtracted from that day's total — see computeDay(). It only ever applies to a
-// day that's already over, never to today while there's still time left to log it.
+// Subtracted from a day's total (see computeDay()) whenever meds weren't completed and
+// the day has either fully closed (a past day) or is today but past MED_WARNING_HOUR.
+// This makes today's live score actually dip at 7pm as a real warning — and it reverses
+// the instant meds get logged, since the condition simply stops being true.
 const MED_PENALTY = 150;
-// From this hour onward (24h clock), an unlogged meds card turns red as a warning that the
-// MED_PENALTY is coming if it's still not logged by midnight. Purely a same-day UI cue —
-// it doesn't affect scoring on its own; only computeDay()'s past-day check does that.
+// From this hour onward (24h clock), an unlogged meds card turns red AND the live penalty
+// above kicks in for today — logging meds at any point removes the penalty and adds the
+// full MED_POINTS_FULL, both in the same recompute.
 const MED_WARNING_HOUR = 19; // 7:00 PM
 const MEDS = [
   { id:'meds_taken', label:'Meds taken', icon:'💊' },
@@ -1208,11 +1209,15 @@ function computeDay(logs, key){
   else if(mealCount === 3) bonusRate = 0.5;
   const bonus = Math.round(mealRaw * bonusRate); // bonus is ADDED on top, never subtracted
 
-  // Missed-meds penalty: only once a day is fully over (a past day, not today) and meds
-  // were never completed that day — absent entirely, or only recorded via a 0-point
-  // back-log. Never applies to today, since there's still time left to log it.
+  // Missed-meds penalty: applies once a day has either fully closed (a past day) OR is
+  // today but past the 7pm warning hour — in both cases, only if meds weren't completed
+  // that day. This makes today's live total actually dip at 7pm as a real warning, not
+  // just a cosmetic one — and it reverses instantly the moment meds get logged, since
+  // medTaken flips true and this condition stops applying on the very next recompute.
+  const isToday = key === todayKey();
   const isPastDay = key < todayKey();
-  const medPenalty = (isPastDay && !medTaken) ? MED_PENALTY : 0;
+  const isPastWarningHourToday = isToday && new Date().getHours() >= MED_WARNING_HOUR;
+  const medPenalty = (isPastDay || isPastWarningHourToday) && !medTaken ? MED_PENALTY : 0;
 
   const total = Math.max(0, mealRaw + medRaw + bonus - medPenalty); // floored — never negative
 
@@ -1424,6 +1429,7 @@ function render(username){
     <div class="bd-row"><span class="label">Meal points earned</span><span class="val">🪙 ${day.mealRaw}</span></div>
     <div class="bd-row"><span class="label">Medication points earned</span><span class="val">🪙 ${day.medRaw}</span></div>
     <div class="bd-row"><span class="label">Daily bonus ${bonusTag}</span><span class="val">+${day.bonus}</span></div>
+    ${day.medPenalty > 0 ? `<div class="bd-row"><span class="label" style="color:var(--red);">Missed-meds penalty</span><span class="val" style="color:var(--red);">−${day.medPenalty}</span></div>` : ''}
     <div class="bd-row total"><span class="label">Today's total</span><span class="val">🪙 ${day.total}</span></div>
 
     <div class="perf-row">
@@ -1749,11 +1755,12 @@ function showPerfInfo(scope){
   if(scope === 'today'){
     const d = window.__lastDay;
     openInfo('Today\u2019s performance', `
-      <p style="font-size:13px;color:var(--ink-dim);line-height:1.6;margin:0 0 10px;">How today's actual points compare to the maximum possible today: all 4 meals on time, both meds logged, and the full bonus.</p>
+      <p style="font-size:13px;color:var(--ink-dim);line-height:1.6;margin:0 0 10px;">How today's actual points compare to the maximum possible today: all 4 meals on time, meds logged, and the full bonus.</p>
       <table class="howto-table">
         <tr><td>Meal points</td><td class="mono">🪙 ${d.mealRaw}</td></tr>
         <tr><td>Medication points</td><td class="mono">🪙 ${d.medRaw}</td></tr>
         <tr><td>Daily bonus</td><td class="mono">🪙 ${d.bonus}</td></tr>
+        ${d.medPenalty > 0 ? `<tr><td style="color:var(--red);">Missed-meds penalty</td><td class="mono" style="color:var(--red);">−${d.medPenalty}</td></tr>` : ''}
         <tr><td>Today's total</td><td class="mono">🪙 ${d.total}</td></tr>
         <tr><td>Today's potential</td><td class="mono">🪙 ${d.potential}</td></tr>
       </table>
