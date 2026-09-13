@@ -476,6 +476,18 @@
     .who .logout{ width:100%; padding:10px 12px; }
   }
 
+  #update-toast{
+    position:fixed; left:16px; right:16px; bottom:16px; z-index:9999; max-width:480px; margin:0 auto;
+    background:var(--bezel-hi); border:1px solid var(--amber); border-radius:10px; padding:12px 14px;
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    font-size:13px; color:var(--ink); box-shadow:0 16px 32px -12px rgba(0,0,0,0.6);
+  }
+  #update-toast button{
+    background:var(--amber); color:#1B1F27; border:none; border-radius:6px;
+    padding:8px 12px; font-weight:600; font-size:12.5px; cursor:pointer; flex-shrink:0;
+  }
+  @media (max-width:480px){ #update-toast{ flex-direction:column; align-items:stretch; } }
+
   [data-screen]{ display:none; }
   [data-screen].active{ display:block; }
 </style>
@@ -1989,11 +2001,50 @@ function categoryBreakdownRows(logs, dateKey){
 
 boot();
 
-/* ---------------- PWA install support ---------------- */
+/* ---------------- PWA install + auto-update ---------------- */
 if('serviceWorker' in navigator){
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(err => console.error('Service worker registration failed:', err));
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      // An open tab won't otherwise notice a new deploy until its next full page
+      // navigation, so actively re-check for a new sw.js periodically.
+      setInterval(() => reg.update(), 60000);
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if(!newWorker) return;
+        newWorker.addEventListener('statechange', () => {
+          // 'installed' + an existing controller means this is a genuine update, not
+          // the very first install (which has no controller yet).
+          if(newWorker.state === 'installed' && navigator.serviceWorker.controller){
+            showUpdateToast();
+          }
+        });
+      });
+    }).catch(err => console.error('Service worker registration failed:', err));
+
+    let reloadingForUpdate = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if(reloadingForUpdate) return; // guard against a double-reload loop
+      reloadingForUpdate = true;
+      window.location.reload();
+    });
   });
+}
+
+function showUpdateToast(){
+  if(document.getElementById('update-toast')) return; // already showing
+  const toast = document.createElement('div');
+  toast.id = 'update-toast';
+  toast.innerHTML = `<span>🔄 A new version is available — reloading shortly.</span><button onclick="applyUpdate()">Reload now</button>`;
+  document.body.appendChild(toast);
+  // Forced: reload automatically after a short grace period even if no one taps the button,
+  // since sw.js already calls skipWaiting()/clients.claim() so the new version is taking
+  // over regardless — this just makes sure the open tab actually catches up to it.
+  setTimeout(applyUpdate, 8000);
+}
+function applyUpdate(){
+  const toast = document.getElementById('update-toast');
+  if(toast) toast.remove();
+  window.location.reload();
 }
 </script>
 </body>
