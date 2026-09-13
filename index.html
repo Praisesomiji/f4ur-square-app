@@ -1192,6 +1192,27 @@ function logMed(username, medId){
   render(username);
 }
 
+// Meds credit for a given day: old "Completed meds" is treated as fully, permanently
+// equivalent to today's single "Meds taken" item — 200 points, unconditionally, checked
+// FIRST so it can never be overridden by anything else recorded for that same old day
+// (e.g. a later 0-point back-log entry). "Started meds" alone never counts on its own.
+// Shared by computeDay() (scoring) and categoryBreakdownRows() (display) so the two
+// never disagree.
+function getMedsCredit(dayLogs){
+  const legacyCompleted = dayLogs['med_completed'];
+  if(legacyCompleted && legacyCompleted.points > 0){
+    return { points: MED_POINTS_FULL, taken: true };
+  }
+  let points = 0, taken = false;
+  MEDS.forEach(md => {
+    if(dayLogs[md.id]){
+      points += dayLogs[md.id].points;
+      if(dayLogs[md.id].points > 0) taken = true;
+    }
+  });
+  return { points, taken };
+}
+
 function computeDay(logs, key){
   const dayLogs = logs[key] || {};
   let mealRaw = 0, mealCount = 0;
@@ -1201,26 +1222,7 @@ function computeDay(logs, key){
       if(dayLogs[m.id].points > 0) mealCount++; // 0-point back-logs don't count toward the bonus
     }
   });
-  let medRaw = 0, medTaken = false;
-  MEDS.forEach(md => {
-    if(dayLogs[md.id]){
-      medRaw += dayLogs[md.id].points;
-      if(dayLogs[md.id].points > 0) medTaken = true;
-    }
-  });
-  // Backward compatibility: days logged before MEDS_REDESIGN_DATE used two separate
-  // items (med_started/med_completed, 100 pts each) instead of today's single item, so
-  // they won't match anything in the current MEDS array above. Recognize that old format
-  // here so those days keep the points they actually earned — up to the same 200-point
-  // ceiling as the new single item — instead of silently reading as "meds never taken".
-  if(medRaw === 0){
-    const legacyPoints = ['med_started', 'med_completed']
-      .reduce((sum, id) => sum + (dayLogs[id] ? dayLogs[id].points : 0), 0);
-    if(legacyPoints > 0){
-      medRaw = legacyPoints;                        // 100 (one old item) or 200 (both)
-      medTaken = legacyPoints >= MED_POINTS_FULL;    // only "fully taken" if both were done
-    }
-  }
+  const { points: medRaw, taken: medTaken } = getMedsCredit(dayLogs);
 
   let bonusRate = 0; // 1 or 2 meals logged => no bonus
   if(mealCount === 4) bonusRate = 1;
@@ -1952,7 +1954,7 @@ function renderDayInfoModal(dateKey, logs){
 // One row per meal/med for a given day: what was earned, what was missed, and why.
 function categoryBreakdownRows(logs, dateKey){
   const dayLogs = logs[dateKey] || {};
-  return MEALS.concat(MEDS).map(e => {
+  const mealRows = MEALS.map(e => {
     const entry = dayLogs[e.id];
     let statusText, color;
     if(!entry){
@@ -1966,6 +1968,23 @@ function categoryBreakdownRows(logs, dateKey){
     }
     return `<tr><td>${e.icon} ${e.label}</td><td class="mono" style="color:${color};">${statusText}</td></tr>`;
   }).join('');
+
+  const md = MEDS[0];
+  const medEntry = dayLogs[md.id];
+  const legacyCompleted = dayLogs['med_completed'];
+  const { points: medPoints, taken: medTaken } = getMedsCredit(dayLogs);
+  let medStatus, medColor;
+  if(legacyCompleted && legacyCompleted.points > 0){
+    medStatus = `Completed (old checklist) · +${medPoints} pts`; medColor = 'var(--green)';
+  } else if(medEntry){
+    medStatus = medEntry.points > 0 ? `On time · +${medEntry.points} pts` : 'Back-logged · 0 pts';
+    medColor = medEntry.points > 0 ? 'var(--green)' : 'var(--red)';
+  } else {
+    medStatus = 'Not logged · 0 pts'; medColor = 'var(--red)';
+  }
+  const medRow = `<tr><td>${md.icon} ${md.label}</td><td class="mono" style="color:${medColor};">${medStatus}</td></tr>`;
+
+  return mealRows + medRow;
 }
 
 boot();
