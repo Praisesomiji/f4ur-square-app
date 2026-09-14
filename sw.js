@@ -1,11 +1,12 @@
 // Four Square service worker — caches only the app shell (this app's own files),
 // so it can launch instantly and installably. Firebase reads/writes and Google Fonts
 // always go straight to the network, since scores need to be live, not cached.
-const CACHE_NAME = 'four-square-shell-v2';
+const CACHE_NAME = 'four-square-shell-v3';
 const SHELL_ASSETS = [
   './',
   './index.html',
   './manifest.json',
+  './changelog.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
 ];

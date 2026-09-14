@@ -1,0 +1,10 @@
+[
+  {
+    "version": "3",
+    "date": "2026-09-14",
+    "highlights": [
+      "Admin dashboard's rules button is now labeled \"Playbook\"",
+      "Update notifications can now show what's new before reloading"
+    ]
+  }
+]
