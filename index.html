@@ -2034,12 +2034,26 @@ function showUpdateToast(){
   if(document.getElementById('update-toast')) return; // already showing
   const toast = document.createElement('div');
   toast.id = 'update-toast';
-  toast.innerHTML = `<span>🔄 A new version is available — reloading shortly.</span><button onclick="applyUpdate()">Reload now</button>`;
+  toast.innerHTML = `<span id="update-toast-msg">🔄 A new version is available — reloading shortly.</span><button onclick="applyUpdate()">Reload now</button>`;
   document.body.appendChild(toast);
-  // Forced: reload automatically after a short grace period even if no one taps the button,
+
+  // Forced: reload automatically after a grace period even if no one taps the button,
   // since sw.js already calls skipWaiting()/clients.claim() so the new version is taking
   // over regardless — this just makes sure the open tab actually catches up to it.
-  setTimeout(applyUpdate, 8000);
+  let reloadTimer = setTimeout(applyUpdate, 8000);
+
+  // Best-effort: show what's new (from the same-origin changelog, not GitHub) and give
+  // more time to read it. If this fails for any reason, the plain reload above still fires.
+  fetch('changelog.json').then(r => r.json()).then(entries => {
+    const latest = entries && entries[0];
+    const msg = document.getElementById('update-toast-msg');
+    if(!latest || !latest.highlights || !latest.highlights.length || !msg) return;
+    clearTimeout(reloadTimer);
+    msg.innerHTML = `🔄 <b>What's new:</b><ul style="margin:6px 0 0 18px;padding:0;">${
+      latest.highlights.map(h => `<li>${h}</li>`).join('')
+    }</ul>`;
+    reloadTimer = setTimeout(applyUpdate, 15000);
+  }).catch(() => {});
 }
 function applyUpdate(){
   const toast = document.getElementById('update-toast');
