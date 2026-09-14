@@ -619,6 +619,13 @@
       </div>
     </div>
 
+    <div class="grid">
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="plate">ACHIEVEMENTS</div>
+        <div class="screen" id="achievements-screen" style="min-height:auto; padding:16px;"></div>
+      </div>
+    </div>
+
     <div class="grid grid-row2">
       <div class="panel" style="grid-column: 1 / -1;">
         <div class="plate">BACK-LOG A MISSED ENTRY</div>
@@ -1274,6 +1281,98 @@ function daysSinceStart(acc, logs){
   return Math.max(1, diffDays + 1);
 }
 
+// Achievement/streak engine — pure computation over existing logs, no new storage.
+// Walks every calendar day since createdAt through today (same range convention as
+// allTimeBreakdown/renderCalendar) and derives streaks, personal bests, and badges.
+// Today's contribution is provisional/live, same as everywhere else in the app (e.g. the
+// meds penalty already dips today's score live — this just reads whatever computeDay says
+// right now, so a streak can still be "in progress" and change before midnight).
+function computeAchievements(logs, createdAt){
+  const startKey = createdAt ? todayKey(new Date(createdAt)) : (Object.keys(logs).sort()[0] || todayKey());
+  const startDate = new Date(startKey + 'T00:00:00');
+  const todayDate = new Date(todayKey() + 'T00:00:00');
+
+  let totalDays = 0;
+  let curPerfectStreak = 0, longestPerfectStreak = 0;
+  let curMedsStreak = 0, longestMedsStreak = 0;
+  let bestDayTotal = 0, bestDayDate = null;
+  let redemptionArc = false, weekendWarrior = false;
+  let prevWasPenaltyDay = false, prevSaturdayPerfect = false;
+  const last30Gpas = [];
+
+  for(let d0 = new Date(startDate); d0 <= todayDate; d0.setDate(d0.getDate() + 1)){
+    const key = todayKey(d0);
+    const day = computeDay(logs, key);
+    const pct = day.potential > 0 ? Math.round((day.total / day.potential) * 100) : 0;
+    const isPerfect = pct === 100;
+    const medsTaken = day.medRaw > 0;
+
+    totalDays++;
+    curPerfectStreak = isPerfect ? curPerfectStreak + 1 : 0;
+    longestPerfectStreak = Math.max(longestPerfectStreak, curPerfectStreak);
+    curMedsStreak = medsTaken ? curMedsStreak + 1 : 0;
+    longestMedsStreak = Math.max(longestMedsStreak, curMedsStreak);
+
+    if(day.total > bestDayTotal){ bestDayTotal = day.total; bestDayDate = key; }
+
+    if(prevWasPenaltyDay && isPerfect) redemptionArc = true;
+    prevWasPenaltyDay = day.medPenalty > 0;
+
+    const dow = d0.getDay(); // 0=Sun .. 6=Sat
+    if(dow === 6){ prevSaturdayPerfect = isPerfect; }
+    else if(dow === 0){ if(prevSaturdayPerfect && isPerfect) weekendWarrior = true; prevSaturdayPerfect = false; }
+    else { prevSaturdayPerfect = false; }
+
+    last30Gpas.push(gpaFor(pct));
+    if(last30Gpas.length > 30) last30Gpas.shift();
+  }
+
+  const last30AvgGpa = last30Gpas.length ? last30Gpas.reduce((a,b) => a+b, 0) / last30Gpas.length : 0;
+
+  const badges = [
+    { id:'iron_stomach',   icon:'🩸', label:'Iron Stomach',   description:'Hit a 7-day perfect streak',                           unlocked: longestPerfectStreak >= 7 },
+    { id:'marathoner',     icon:'🏃', label:'Marathoner',      description:'Hit a 30-day perfect streak',                          unlocked: longestPerfectStreak >= 30 },
+    { id:'century_club',   icon:'💯', label:'Century Club',    description:'Tracked 100 days',                                     unlocked: totalDays >= 100 },
+    { id:'honor_roll',     icon:'🎓', label:'Honor Roll',      description:'30-day average GPA of 4.0+',                           unlocked: last30AvgGpa >= 4.0 },
+    { id:'redemption_arc', icon:'🔁', label:'Redemption Arc',  description:'Bounced back with a perfect day right after a penalty', unlocked: redemptionArc },
+    { id:'weekend_warrior',icon:'🎉', label:'Weekend Warrior', description:'Perfect Saturday and Sunday back to back',             unlocked: weekendWarrior },
+  ];
+
+  return {
+    totalDays,
+    currentPerfectStreak: curPerfectStreak, longestPerfectStreak,
+    currentMedsStreak: curMedsStreak, longestMedsStreak,
+    bestDayTotal, bestDayDate,
+    last30AvgGpa, badges,
+  };
+}
+
+
+function renderAchievements(username, logs, createdAt){
+  const el = document.getElementById('achievements-screen');
+  if(!el) return;
+  const a = computeAchievements(logs, createdAt);
+  const bestDayLabel = a.bestDayDate
+    ? new Date(a.bestDayDate + 'T00:00:00').toLocaleDateString([], { month:'short', day:'numeric' })
+    : '—';
+  el.innerHTML = `
+    <div class="bd-row"><span class="label">Current perfect-day streak</span><span class="val">🔥 ${a.currentPerfectStreak} day${a.currentPerfectStreak===1?'':'s'}</span></div>
+    <div class="bd-row"><span class="label">Longest perfect-day streak</span><span class="val">🔥 ${a.longestPerfectStreak} day${a.longestPerfectStreak===1?'':'s'}</span></div>
+    <div class="bd-row"><span class="label">Current meds streak</span><span class="val">💊 ${a.currentMedsStreak} day${a.currentMedsStreak===1?'':'s'}</span></div>
+    <div class="bd-row"><span class="label">Best day ever</span><span class="val">🪙 ${a.bestDayTotal} · ${bestDayLabel}</span></div>
+    <div class="bd-row"><span class="label">30-day average GPA</span><span class="val">${formatGpa(a.last30AvgGpa)}</span></div>
+    <p style="font-size:12px;color:var(--ink-dim);margin:16px 0 8px;">Badges</p>
+    <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px;">
+      ${a.badges.map(b => `
+        <div style="text-align:center; padding:10px 8px; border-radius:10px; background:${b.unlocked ? 'rgba(232,163,61,0.1)' : '#0C1016'}; border:1px solid ${b.unlocked ? 'var(--amber)' : '#232B38'}; opacity:${b.unlocked ? '1' : '0.5'};" title="${b.description}">
+          <div style="font-size:20px;">${b.icon}</div>
+          <div style="font-size:11px; font-weight:600; margin-top:4px; color:${b.unlocked ? 'var(--amber)' : 'var(--ink-dim)'};">${b.label}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
 function allTimeBreakdown(username, logs, createdAt){
   let mealRaw = 0, medRaw = 0, bonus = 0, total = 0;
   Object.keys(logs).forEach(key => {
@@ -1452,6 +1551,8 @@ function render(username){
   const atb = allTimeBreakdown(username, logs, selfAcc && selfAcc.createdAt);
   const todayPerf = Math.min(100, Math.round((day.total / DAILY_POTENTIAL) * 100));
   window.__lastDay = day; window.__lastATB = atb; // for the info popups
+
+  renderAchievements(username, logs, selfAcc && selfAcc.createdAt);
 
   const bonusTag = day.bonusRate === 1
     ? '<span class="bonus-tag full">4 MEALS · +100%</span>'
