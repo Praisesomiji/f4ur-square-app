@@ -363,7 +363,10 @@
   .modal-close:hover{ color:var(--ink); }
   .howto-section{ margin-bottom:18px; }
   .howto-section:last-child{ margin-bottom:0; }
-  .howto-section h3{ font-size:13px; margin:0 0 8px; color:var(--amber); font-weight:600; }
+  .howto-section h3{ font-size:13px; margin:0 0 8px; color:var(--amber); font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:space-between; }
+  .howto-section h3::after{ content:'▾'; font-size:11px; transition:transform 0.15s; }
+  .howto-section.collapsed h3::after{ transform:rotate(-90deg); }
+  .howto-section.collapsed > *:not(h3){ display:none; }
   .howto-section p, .howto-section li{ font-size:13px; color:var(--ink-dim); line-height:1.6; margin:0 0 4px; }
   .howto-table{ width:100%; border-collapse:collapse; margin-top:4px; }
   .howto-table td{ font-size:12.5px; padding:6px 4px; border-bottom:1px dashed #2A3140; color:var(--ink); }
@@ -927,6 +930,16 @@ document.addEventListener('DOMContentLoaded', () => {
     return `<tr><td>${b.letter} · ${formatGpa(b.gpa)}</td><td class="mono">${range}</td></tr>`;
   }).join('');
   document.getElementById('howto-grade-table').innerHTML = rows;
+
+  // Playbook accordion: click a section heading to expand/collapse it. Starts with only
+  // "The idea" open, everything else collapsed, since the playbook keeps growing as
+  // features get added and showing it all open at once is hard to scan.
+  const sections = document.querySelectorAll('.howto-section');
+  sections.forEach((sec, i) => {
+    if(i > 0) sec.classList.add('collapsed');
+    const heading = sec.querySelector('h3');
+    if(heading) heading.addEventListener('click', () => sec.classList.toggle('collapsed'));
+  });
 });
 function gradeFor(pct){
   for(const band of GRADE_BANDS){ if(pct >= band.min) return band; }
