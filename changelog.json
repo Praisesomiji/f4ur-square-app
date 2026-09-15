@@ -1,5 +1,15 @@
 [
   {
+    "version": "5",
+    "date": "2026-09-14",
+    "highlights": [
+      "New Streak Freeze: protect your streak once a month by using it on today before the day closes",
+      "Badges and personal bests now pop a celebration banner the moment you earn them",
+      "New Weekly Recap panel: your last 7 days at a glance",
+      "Playbook sections are now collapsible — tap a heading to expand it"
+    ]
+  },
+  {
     "version": "4",
     "date": "2026-09-14",
     "highlights": [
