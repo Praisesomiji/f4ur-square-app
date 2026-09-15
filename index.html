@@ -635,6 +635,13 @@
       </div>
     </div>
 
+    <div class="grid">
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="plate">THIS WEEK</div>
+        <div class="screen" id="weekly-recap-screen" style="min-height:auto; padding:16px;"></div>
+      </div>
+    </div>
+
     <div class="grid grid-row2">
       <div class="panel" style="grid-column: 1 / -1;">
         <div class="plate">BACK-LOG A MISSED ENTRY</div>
@@ -1290,7 +1297,37 @@ function daysSinceStart(acc, logs){
   return Math.max(1, diffDays + 1);
 }
 
-// Achievement/streak engine — pure computation over existing logs, no new storage.
+// Trailing 7 days (today + 6 prior), pure computation over existing logs — no new storage.
+function computeWeeklyRecap(logs){
+  const today = new Date(); today.setHours(0,0,0,0);
+  let sumPct = 0, bestTotal = -1, bestKey = null, perfectMealDays = 0, medsDays = 0;
+  for(let i = 6; i >= 0; i--){
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    const key = todayKey(d);
+    const day = computeDay(logs, key);
+    const pct = day.potential > 0 ? Math.round((day.total / day.potential) * 100) : 0;
+    sumPct += pct;
+    if(day.total > bestTotal){ bestTotal = day.total; bestKey = key; }
+    if(day.mealCount === 4) perfectMealDays++;
+    if(day.medRaw > 0) medsDays++;
+  }
+  return { avgPct: Math.round(sumPct / 7), bestTotal: Math.max(0, bestTotal), bestKey, perfectMealDays, medsDays };
+}
+
+function renderWeeklyRecap(logs){
+  const el = document.getElementById('weekly-recap-screen');
+  if(!el) return;
+  const w = computeWeeklyRecap(logs);
+  const bestLabel = w.bestKey ? new Date(w.bestKey + 'T00:00:00').toLocaleDateString([], { weekday:'short' }) : '—';
+  el.innerHTML = `
+    <div class="bd-row"><span class="label">Average performance</span><span class="val">${w.avgPct}%</span></div>
+    <div class="bd-row"><span class="label">Best day</span><span class="val">🪙 ${w.bestTotal} · ${bestLabel}</span></div>
+    <div class="bd-row"><span class="label">All 4 meals logged</span><span class="val">${w.perfectMealDays}/7 days</span></div>
+    <div class="bd-row"><span class="label">Meds taken</span><span class="val">${w.medsDays}/7 days</span></div>
+  `;
+}
+
+
 // Walks every calendar day since createdAt through today (same range convention as
 // allTimeBreakdown/renderCalendar) and derives streaks, personal bests, and badges.
 // Today's contribution is provisional/live, same as everywhere else in the app (e.g. the
@@ -1633,6 +1670,7 @@ function render(username){
   window.__lastDay = day; window.__lastATB = atb; // for the info popups
 
   renderAchievements(username, logs, selfAcc, selfAcc && selfAcc.createdAt);
+  renderWeeklyRecap(logs);
 
   const bonusTag = day.bonusRate === 1
     ? '<span class="bonus-tag full">4 MEALS · +100%</span>'
