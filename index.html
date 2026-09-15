@@ -476,6 +476,15 @@
     .who .logout{ width:100%; padding:10px 12px; }
   }
 
+  .celebration-toast{
+    position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:9999;
+    background:linear-gradient(135deg, var(--amber), #F2C572); color:#1B1F27;
+    font-weight:700; font-size:13px; padding:12px 20px; border-radius:30px;
+    box-shadow:0 16px 32px -8px rgba(232,163,61,0.5);
+    animation:celebrationPop 0.35s ease-out;
+  }
+  @keyframes celebrationPop{ 0%{ transform:translateX(-50%) scale(0.7); opacity:0; } 100%{ transform:translateX(-50%) scale(1); opacity:1; } }
+
   #update-toast{
     position:fixed; left:16px; right:16px; bottom:16px; z-index:9999; max-width:480px; margin:0 auto;
     background:var(--bezel-hi); border:1px solid var(--amber); border-radius:10px; padding:12px 14px;
@@ -1358,6 +1367,7 @@ function renderAchievements(username, logs, acc, createdAt){
   if(!el) return;
   const freezes = (acc && acc.freezes) || {};
   const a = computeAchievements(logs, createdAt, freezes);
+  checkMilestoneCelebrations(username, a);
   const bestDayLabel = a.bestDayDate
     ? new Date(a.bestDayDate + 'T00:00:00').toLocaleDateString([], { month:'short', day:'numeric' })
     : '—';
@@ -1407,6 +1417,40 @@ function useStreakFreeze(){
   acc.freezes = freezes;
   saveAccount(acc); // syncs to Firebase like every other account field
   render(acc.username);
+}
+
+// Front-end-only celebration layer: reuses the achievement engine's own output, no new
+// detection logic of its own. "Already celebrated" state is local per-device (localStorage,
+// not synced) — worst case a badge re-celebrates once on a new device, which is harmless.
+function checkMilestoneCelebrations(username, achievements){
+  const key = 'foursquare_celebrated_' + username;
+  let state;
+  try{ state = JSON.parse(localStorage.getItem(key)) || {}; }catch(e){ state = {}; }
+  const celebratedBadges = new Set(state.badges || []);
+  const prevBest = state.bestDayTotal || 0;
+
+  const newlyUnlocked = achievements.badges.filter(b => b.unlocked && !celebratedBadges.has(b.id));
+  // prevBest > 0 guard: don't celebrate a "new record" the very first time any day is ever logged.
+  const isNewBest = prevBest > 0 && achievements.bestDayTotal > prevBest;
+
+  if(newlyUnlocked.length){
+    newlyUnlocked.forEach(b => celebratedBadges.add(b.id));
+    showCelebration(`${newlyUnlocked[0].icon} Badge unlocked: ${newlyUnlocked[0].label}!`);
+  } else if(isNewBest){
+    showCelebration(`🏆 New personal best: ${achievements.bestDayTotal} pts!`);
+  }
+
+  state.badges = [...celebratedBadges];
+  state.bestDayTotal = Math.max(prevBest, achievements.bestDayTotal);
+  localStorage.setItem(key, JSON.stringify(state));
+}
+
+function showCelebration(text){
+  const el = document.createElement('div');
+  el.className = 'celebration-toast';
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
 }
 
 function allTimeBreakdown(username, logs, createdAt){
