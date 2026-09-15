@@ -1287,7 +1287,12 @@ function daysSinceStart(acc, logs){
 // Today's contribution is provisional/live, same as everywhere else in the app (e.g. the
 // meds penalty already dips today's score live — this just reads whatever computeDay says
 // right now, so a streak can still be "in progress" and change before midnight).
-function computeAchievements(logs, createdAt){
+// freezes: { "YYYY-MM": "YYYY-MM-DD" } — at most one entry per month, written by
+// useStreakFreeze() when a player proactively spends their monthly freeze on today.
+// A frozen day still scores whatever it actually earned (total/bestDayTotal are
+// unaffected) — the freeze ONLY keeps the perfect-day streak from resetting on that date.
+function computeAchievements(logs, createdAt, freezes){
+  const frozenDates = new Set(freezes ? Object.values(freezes) : []);
   const startKey = createdAt ? todayKey(new Date(createdAt)) : (Object.keys(logs).sort()[0] || todayKey());
   const startDate = new Date(startKey + 'T00:00:00');
   const todayDate = new Date(todayKey() + 'T00:00:00');
@@ -1304,7 +1309,7 @@ function computeAchievements(logs, createdAt){
     const key = todayKey(d0);
     const day = computeDay(logs, key);
     const pct = day.potential > 0 ? Math.round((day.total / day.potential) * 100) : 0;
-    const isPerfect = pct === 100;
+    const isPerfect = pct === 100 || frozenDates.has(key);
     const medsTaken = day.medRaw > 0;
 
     totalDays++;
@@ -1348,19 +1353,38 @@ function computeAchievements(logs, createdAt){
 }
 
 
-function renderAchievements(username, logs, createdAt){
+function renderAchievements(username, logs, acc, createdAt){
   const el = document.getElementById('achievements-screen');
   if(!el) return;
-  const a = computeAchievements(logs, createdAt);
+  const freezes = (acc && acc.freezes) || {};
+  const a = computeAchievements(logs, createdAt, freezes);
   const bestDayLabel = a.bestDayDate
     ? new Date(a.bestDayDate + 'T00:00:00').toLocaleDateString([], { month:'short', day:'numeric' })
     : '—';
+
+  const monthKey = todayKey().slice(0, 7);
+  const todayKeyStr = todayKey();
+  const usedThisMonth = freezes[monthKey];
+  const todayDay = computeDay(logs, todayKeyStr);
+  const todayIsPerfect = todayDay.potential > 0 && Math.round((todayDay.total / todayDay.potential) * 100) === 100;
+  let freezeHtml;
+  if(usedThisMonth === todayKeyStr){
+    freezeHtml = `<span class="bonus-tag full">❄️ Freeze used today</span>`;
+  } else if(usedThisMonth){
+    freezeHtml = `<span class="bonus-tag zero">❄️ Freeze already used this month (${usedThisMonth})</span>`;
+  } else if(todayIsPerfect){
+    freezeHtml = `<span class="bonus-tag full">❄️ Freeze available — today's already perfect, no need</span>`;
+  } else {
+    freezeHtml = `<button class="btn ghost" style="width:auto; padding:8px 14px;" onclick="useStreakFreeze()">❄️ Use this month's Streak Freeze on today</button>`;
+  }
+
   el.innerHTML = `
     <div class="bd-row"><span class="label">Current perfect-day streak</span><span class="val">🔥 ${a.currentPerfectStreak} day${a.currentPerfectStreak===1?'':'s'}</span></div>
     <div class="bd-row"><span class="label">Longest perfect-day streak</span><span class="val">🔥 ${a.longestPerfectStreak} day${a.longestPerfectStreak===1?'':'s'}</span></div>
     <div class="bd-row"><span class="label">Current meds streak</span><span class="val">💊 ${a.currentMedsStreak} day${a.currentMedsStreak===1?'':'s'}</span></div>
     <div class="bd-row"><span class="label">Best day ever</span><span class="val">🪙 ${a.bestDayTotal} · ${bestDayLabel}</span></div>
     <div class="bd-row"><span class="label">30-day average GPA</span><span class="val">${formatGpa(a.last30AvgGpa)}</span></div>
+    <div class="bd-row"><span class="label">Streak Freeze (1/month)</span><span class="val">${freezeHtml}</span></div>
     <p style="font-size:12px;color:var(--ink-dim);margin:16px 0 8px;">Badges</p>
     <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px;">
       ${a.badges.map(b => `
@@ -1371,6 +1395,18 @@ function renderAchievements(username, logs, createdAt){
       `).join('')}
     </div>
   `;
+}
+
+function useStreakFreeze(){
+  const acc = getAccount();
+  if(!acc) return;
+  const monthKey = todayKey().slice(0, 7);
+  const freezes = acc.freezes || {};
+  if(freezes[monthKey]) return; // already used this month — button shouldn't even be visible
+  freezes[monthKey] = todayKey();
+  acc.freezes = freezes;
+  saveAccount(acc); // syncs to Firebase like every other account field
+  render(acc.username);
 }
 
 function allTimeBreakdown(username, logs, createdAt){
@@ -1552,7 +1588,7 @@ function render(username){
   const todayPerf = Math.min(100, Math.round((day.total / DAILY_POTENTIAL) * 100));
   window.__lastDay = day; window.__lastATB = atb; // for the info popups
 
-  renderAchievements(username, logs, selfAcc && selfAcc.createdAt);
+  renderAchievements(username, logs, selfAcc, selfAcc && selfAcc.createdAt);
 
   const bonusTag = day.bonusRate === 1
     ? '<span class="bonus-tag full">4 MEALS · +100%</span>'
